@@ -2,9 +2,9 @@
 // @name         Google AI Studio - Ultimate Optimizer UI (Stream Buffer & GPU Saver Fork)
 // @name:ru      Google AI Studio - Оптимизатор интерфейса и Буфер стрима (Форк без тормозов)
 // @namespace    https://github.com/lagovi/Google-AI-Studio-Optimizer
-// @version      6.1.0
-// @description  Zero-CPU Stream Buffering + Idle GPU Saver + Draggable UI + RU/EN i18n + MD/JSON Export. Fork of Kfayyy's Ultimate Optimizer UI.
-// @description:ru Буферизация стрима ИИ (0% нагрузки CPU) + Защита видеокарты в покое + Перетаскиваемые кнопки + Экспорт чата в MD/JSON.
+// @version      6.3.0
+// @description  Zero-CPU Stream Buffering + Background Tab Rendering Keep-Alive + Idle GPU Saver + Draggable UI + RU/EN i18n + MD/JSON Export.
+// @description:ru Фоновый рендеринг без пауз + Буферизация стрима ИИ + Защита видеокарты в покое + Перетаскиваемые кнопки + Экспорт в MD/JSON.
 // @match        https://aistudio.google.com/*
 // @author       lagovi (Original author: Kfayyy - https://github.com/Kfayyy/Google-AI-Studio-Optimizer)
 // @license      MIT
@@ -19,13 +19,13 @@
     'use strict';
 
     const FENCE = '\x60\x60\x60';
-    const CONFIG_KEY = 'ai_studio_optimizer_config_v610';
+    const CONFIG_KEY = 'ai_studio_optimizer_config_v620';
 
     let BASE_MAX_VISIBLE = 15, MAX_VISIBLE = 15, MAX_CACHE = 50, RESTORE_COUNT = 10, enabled = true;
     let hypKillInfiniteAnim = true, hypKillBackdropBlur = true, hypSmartObserver = true, hypLazyMarkdown = true;
     let hypSafeTurnIsolate = true, hypPromptContainment = true, hypKillMicCanvas = true;
     let hypThrottleAutoscroll = true, hypCoalesceStreamRaf = true, hypAutoRepairMarkdown = true;
-    let hypVirtualStreamBuffer = true, smartScrollParkOnFinish = true;
+    let hypVirtualStreamBuffer = true, hypBackgroundKeepAlive = true, smartScrollParkOnFinish = true;
     let expIncludeThoughts = false, expIncludeSystem = true, expRemoveEmojis = false, expFormat = 'md';
     let posTopPill = null, posBottomBtn = null;
     let lang = (navigator.language || '').toLowerCase().startsWith('ru') ? 'ru' : 'en';
@@ -40,7 +40,7 @@
             hdrChatTtTitle: 'Управление памятью чата и Экспорт',
             hdrChatTtBody: 'Показывает, сколько последних сообщений открыто на экране, а сколько старых скрыто в архиве для ускорения браузера. Нажмите для настройки или экспорта чата.',
             hdrDiagTtTitle: 'Монитор нагрузки и Ускоритель стрима',
-            hdrDiagTtBody: 'Показывает текущую занятость потока браузера (0% — вкладка работает идеально легко). Нажмите для настройки буферизации ответов и диагностики.',
+            hdrDiagTtBody: 'Показывает текущую занятость потока браузера (0% — вкладка работает идеально легко). Нажмите для настройки буферизации ответов и фоновой работы.',
             collapseBtn: '⋮⋮ ▼ Свернуть код',
             collapseDone: (c) => `⋮⋮ ▼ Свёрнуто: ${c}`,
             collapseTtTitle: 'Свернуть длинные блоки кода (можно перетащить мышкой!)',
@@ -83,8 +83,10 @@
             expScan: (dots) => '⏳ Сканирование чата' + '.'.repeat(dots),
             expErr: 'Ошибка при экспорте чата.',
             diagModalTitle: '🩺 Ускоритель работы и Монитор ресурсов',
-            t1Title: '📦 Буферизация потокового ответа ИИ (Защита от тормозов при генерации)',
-            t1Sub: 'Когда ИИ пишет длинный ответ, скрипт сначала показывает блок мыслей (Thinking), а сам текст ответа копит в фоновом буфере и выдаёт готовым за 1 раз, снижая нагрузку на процессор в 15 раз.',
+            t0Title: '🔄 Не останавливать генерацию и рендеринг в фоновой вкладке',
+            t0Sub: 'Позволяет AI Studio продолжать приём и отрисовку ответа, когда вы переключились на другую вкладку или другой рабочий стол (обходит блокировку Page Visibility и rAF).',
+            t1Title: '📦 Умная буферизация кода: Текст сразу, а тяжёлый код — одним кадром',
+            t1Sub: 'Сразу выводит на экран размышления и обычный текст ДО блока кода (чтобы вы могли читать), а тяжёлые куски кода копит в буфере при 0% CPU и выдаёт готовыми.'
             t2Title: '🛡️ Отключить холостые анимации и размытие фона (Экономия видеокарты и батареи)',
             t2Sub: 'Убирает бесконечные фоновые перерисовки спиннеров, эквалайзера микрофона и полупрозрачное размытие панелей при прокрутке.',
             t3Title: '🛠️ Автоматически чинить сорванную разметку длинных блоков кода',
@@ -102,7 +104,7 @@
             hudFlushBtn: '👁️ Показать уже принятый текст',
             hudFlushed: '⚡ Отрисовано!',
             hudFlushTtTitle: 'Принудительно отрисовать текущую часть ответа',
-            hudFlushTtBody: 'Пока идёт генерация, скрипт копит текст ответа в лёгком буфере, чтобы браузер не тормозил на каждом слове. Нажмите сюда, если хотите прочитать начало ответа прямо сейчас.',
+            hudFlushTtBody: 'Пока идёт генерация, скрипт копит текст ответа крупными пачками, чтобы браузер не тормозил на каждом слове. Нажмите сюда, если хотите обновить текст прямо сейчас.',
             codeLines: (n) => `${n} строк`,
             copyCode: '📋 Копировать код',
             copiedCode: '✅ Скопировано!',
@@ -122,7 +124,7 @@
             hdrChatTtTitle: 'Chat DOM Memory & Export',
             hdrChatTtBody: 'Shows how many recent messages are rendered on screen and how many older turns are archived to prevent browser lag. Click to configure or export chat.',
             hdrDiagTtTitle: 'Resource Monitor & Stream Accelerator',
-            hdrDiagTtBody: 'Shows real-time main thread CPU load (0% means completely idle). Click to configure stream buffering and GPU optimizations.',
+            hdrDiagTtBody: 'Shows real-time main thread CPU load (0% means completely idle). Click to configure stream buffering and background rendering.',
             collapseBtn: '⋮⋮ ▼ Collapse Code',
             collapseDone: (c) => `⋮⋮ ▼ Collapsed: ${c}`,
             collapseTtTitle: 'Collapse all code blocks (Draggable!)',
@@ -165,8 +167,10 @@
             expScan: (dots) => '⏳ Scanning chat' + '.'.repeat(dots),
             expErr: 'Error exporting conversation.',
             diagModalTitle: '🩺 Stream Accelerator & Resource Monitor',
-            t1Title: '📦 Two-Phase Virtual Stream Buffer (Zero-Lag AI Generation)',
-            t1Sub: 'Renders the Thinking block first, then accumulates heavy answer chunks in a background buffer and renders once when complete — cutting CPU blocking by 15x.',
+            t0Title: '🔄 Keep streaming & rendering active in background tabs',
+            t0Sub: 'Prevents AI Studio from pausing generation or rendering when you switch to another tab or workspace (bypasses Page Visibility & background rAF suspension).',
+            t1Title: '📦 Prose-First / Code-Gate Stream Buffer (Read text while code buffers)',
+            t1Sub: 'Renders Thinking and introductory text BEFORE code blocks immediately so you can read, while buffering heavy code blocks at 0% CPU until complete.'
             t2Title: '🛡️ Idle GPU & Battery Saver (Freeze infinite animations & blur)',
             t2Sub: 'Stops infinite spinner animations, disables heavy backdrop-filter blur during scroll, and blocks 60fps mic canvas redraws.',
             t3Title: '🛠️ Auto-Repair broken markdown on huge code blocks',
@@ -180,11 +184,11 @@
             btnSnap: '🚀 Send telemetry snapshot to chat',
             ttSnapTitle: 'Send technical metrics',
             ttSnapBody: 'Inserts the current performance telemetry JSON into the prompt box and sends it.',
-            hudStream: (kb, sec) => `⚡ Buffering AI response at 0% CPU load: ${kb} KB (${sec}s)`,
+            hudStream: (kb, sec) => `⚡ Buffering AI response at ~0% CPU load: ${kb} KB (${sec}s)`,
             hudFlushBtn: '👁️ Render received text now',
             hudFlushed: '⚡ Rendered!',
             hudFlushTtTitle: 'Flush buffered text immediately',
-            hudFlushTtBody: 'While generating, text is accumulated in a lightweight buffer to prevent lag. Click here to render the partial response right now.',
+            hudFlushTtBody: 'While generating, text is accumulated in batches to prevent lag. Click here to render the latest received text right now.',
             codeLines: (n) => `${n} lines`,
             copyCode: '📋 Copy Code',
             copiedCode: '✅ Copied!',
@@ -210,6 +214,7 @@
             hypKillMicCanvas = p.hypKillMicCanvas ?? true; hypThrottleAutoscroll = p.hypThrottleAutoscroll ?? true;
             hypCoalesceStreamRaf = p.hypCoalesceStreamRaf ?? true; hypAutoRepairMarkdown = p.hypAutoRepairMarkdown ?? true;
             hypVirtualStreamBuffer = p.hypVirtualStreamBuffer ?? true;
+            hypBackgroundKeepAlive = p.hypBackgroundKeepAlive ?? true;
             smartScrollParkOnFinish = p.smartScrollParkOnFinish ?? true;
             expIncludeThoughts = p.expIncludeThoughts ?? false; expIncludeSystem = p.expIncludeSystem ?? true;
             expRemoveEmojis = p.expRemoveEmojis ?? false; expFormat = p.expFormat ?? 'md';
@@ -226,7 +231,7 @@
                 hypKillInfiniteAnim, hypKillBackdropBlur, hypSmartObserver, hypLazyMarkdown,
                 hypSafeTurnIsolate, hypPromptContainment, hypKillMicCanvas,
                 hypThrottleAutoscroll, hypCoalesceStreamRaf, hypAutoRepairMarkdown,
-                hypVirtualStreamBuffer, smartScrollParkOnFinish,
+                hypVirtualStreamBuffer, hypBackgroundKeepAlive, smartScrollParkOnFinish,
                 expIncludeThoughts, expIncludeSystem, expRemoveEmojis, expFormat,
                 posTopPill, posBottomBtn, lang
             }));
@@ -248,6 +253,44 @@
 
     const nativeRAF = window.requestAnimationFrame.bind(window);
     const nativeSetTimeout = window.setTimeout.bind(window);
+    const origHiddenGetter = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden')?.get;
+
+    function isTabActuallyHiddenInBrowser() {
+        try { return origHiddenGetter ? Boolean(origHiddenGetter.call(document)) : false; } catch (e) { return false; }
+    }
+
+    // =========================================================================
+    // 🔄 BACKGROUND TAB KEEP-ALIVE (Не останавливать генерацию и рендеринг в фоне!)
+    // 1) Обманывает Page Visibility API (document.hidden = false), чтобы AI Studio не ставил стрим на паузу.
+    // 2) Когда вкладка реально скрыта в фоне, переводит requestAnimationFrame на таймер setTimeout,
+    //    чтобы Angular продолжал рендерить ответ в фоне (так как нативный rAF в фоне заморожен браузером)!
+    // =========================================================================
+    try {
+        Object.defineProperty(Document.prototype, 'hidden', {
+            get: function() {
+                if (hypBackgroundKeepAlive) return false;
+                return origHiddenGetter ? origHiddenGetter.call(this) : false;
+            },
+            configurable: true
+        });
+        Object.defineProperty(Document.prototype, 'visibilityState', {
+            get: function() {
+                if (hypBackgroundKeepAlive) return 'visible';
+                return isTabActuallyHiddenInBrowser() ? 'hidden' : 'visible';
+            },
+            configurable: true
+        });
+        window.addEventListener('visibilitychange', (e) => {
+            if (hypBackgroundKeepAlive) {
+                e.stopImmediatePropagation();
+            }
+        }, true);
+        document.addEventListener('visibilitychange', (e) => {
+            if (hypBackgroundKeepAlive) {
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    } catch (e) {}
 
     async function safeClipboardWrite(text) {
         try {
@@ -387,6 +430,12 @@
         streamStatusTitle.textContent = tr().hudStream(kb, elapsedSec);
     }
 
+    // =========================================================================
+    // 📦 H12: БЕЗОПАСНЫЙ ПАКЕТНЫЙ БУФЕР XHR С ГАРАНТИРОВАННЫМ ФИНАЛЬНЫМ СБРОСОМ
+    // Подавляет 95% промежуточных вызовов progress (пропуская пачки раз в 1.8 сек),
+    // а при завершении потока (readyState === 4 / load) ГАРАНТИРОВАННО доставляет
+    // финальный progress со 100% текста перед закрытием потока (никогда не застревает в фоне!)
+    // =========================================================================
     try {
         const XHRProto = window.XMLHttpRequest.prototype;
         const origOpen = XHRProto.open;
@@ -399,39 +448,104 @@
             this._aiLabUrl = String(url || '');
             this._isAiGenStream = /GenerateContent|StreamGenerate/i.test(this._aiLabUrl) && !/CountTokens|Upload/i.test(this._aiLabUrl);
             this._lastAllowedFlushTs = 0;
+            this._lastAllowedEventTs = 0;
             this._cachedFlushedText = '';
-            this._thoughtPhaseFlushed = false;
+            this._streamCompleted = false;
+            this._preCodeFlushed = false;
+            this._lastClosedFenceCount = 0;
+            this._savedProgListeners = [];
             return origOpen.call(this, method, url, ...rest);
         };
 
+        // Принудительно доставляет финальную пачку текста всем слушателям progress перед закрытием стрима
+        function flushFinalProgressToListeners(xhr) {
+            if (!xhr._isAiGenStream || xhr._finalProgressFlushed) return;
+            xhr._finalProgressFlushed = true;
+            xhr._streamCompleted = true;
+            updateStreamBufferHud(false, 0);
+            try {
+                const fullTxt = respTextDesc?.get ? respTextDesc.get.call(xhr) : '';
+                xhr._cachedFlushedText = fullTxt || '';
+                const fakeProgEvt = new ProgressEvent('progress', { loaded: xhr._cachedFlushedText.length });
+                if (typeof xhr._origOnProgressFn === 'function') {
+                    try { xhr._origOnProgressFn.call(xhr, fakeProgEvt); } catch (e) {}
+                }
+                if (Array.isArray(xhr._savedProgListeners)) {
+                    for (let i = 0; i < xhr._savedProgListeners.length; i++) {
+                        try { xhr._savedProgListeners[i].call(xhr, fakeProgEvt); } catch (e) {}
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function evaluateProseAndCodeGate(xhr, realText) {
+            const txt = realText || '';
+            const now = performance.now();
+            const fenceMatches = txt.match(/\x60\x60\x60/g);
+            const fenceCount = fenceMatches ? fenceMatches.length : 0;
+            const insideCodeBlockNow = (fenceCount % 2) === 1;
+
+            // 1. Если пользователь нажал кнопку принудительной отрисовки
+            if (diag.forceFlushNow) {
+                diag.forceFlushNow = false;
+                return { allow: true, showHud: insideCodeBlockNow };
+            }
+            // 2. Пока блока кода ещё нет (fenceCount === 0): выводим обычный текст быстро (каждые 550 мс), чтобы человек сразу читал!
+            if (fenceCount === 0) {
+                if (now - xhr._lastAllowedFlushTs >= 550) {
+                    return { allow: true, showHud: false };
+                }
+                return { allow: false, showHud: false };
+            }
+            // 3. Как только открылся ПЕРВЫЙ блок кода (fenceCount >= 1 впервые):
+            // МГНОВЕННО сбрасываем на экран весь накопленный текст ДО кода и запираем буфер на время приёма кода!
+            if (!xhr._preCodeFlushed) {
+                xhr._preCodeFlushed = true;
+                xhr._lastClosedFenceCount = fenceCount;
+                const firstFenceIdx = txt.indexOf('\x60\x60\x60');
+                const proseOnlySlice = firstFenceIdx > 0 ? txt.slice(0, firstFenceIdx) : txt;
+                return { allow: true, customSlice: proseOnlySlice, showHud: true };
+            }
+            // 4. Если блок кода закрылся (чётное число маркеров > прежнего) — сбрасываем готовый блок кода на экран!
+            if (!insideCodeBlockNow && fenceCount > xhr._lastClosedFenceCount) {
+                xhr._lastClosedFenceCount = fenceCount;
+                return { allow: true, showHud: false };
+            }
+            // 5. Пока идёт приём строк ВНУТРИ блока кода (insideCodeBlockNow === true):
+            // Держим буфер закрытым (0% нагрузки на CPU от подсветки синтаксиса!), показывая плашку прогресса
+            if (insideCodeBlockNow) {
+                return { allow: false, showHud: true };
+            }
+            // 6. Обычный текст после закрытия блока кода — обновляем раз в 700 мс
+            if (now - xhr._lastAllowedFlushTs >= 700) {
+                return { allow: true, showHud: false };
+            }
+            return { allow: false, showHud: false };
+        }
+
         function getSmartBufferedText(xhrInstance, realText) {
-            if (!hypVirtualStreamBuffer || !xhrInstance._isAiGenStream || !diag.isStreamingNow || xhrInstance.readyState !== 3) {
-                if (xhrInstance._isAiGenStream && xhrInstance.readyState === 4) updateStreamBufferHud(false, 0);
+            if (!hypVirtualStreamBuffer || !xhrInstance._isAiGenStream) return realText;
+            if (xhrInstance.readyState === 4 || xhrInstance._streamCompleted) {
+                xhrInstance._streamCompleted = true;
+                updateStreamBufferHud(false, 0);
                 return realText;
             }
+            if (xhrInstance.readyState !== 3) return realText;
+
             if (!diag.streamStartTs) diag.streamStartTs = performance.now();
             const now = performance.now(), len = realText ? realText.length : 0;
+            const gate = evaluateProseAndCodeGate(xhrInstance, realText);
 
-            const isEarlyThinkingWindow = !xhrInstance._thoughtPhaseFlushed && (now - diag.streamStartTs < 7000) && (now - xhrInstance._lastAllowedFlushTs > 1800);
-            const hasThoughtDomAlready = Boolean(document.querySelector('ms-chat-turn:last-of-type ms-thought-chunk'));
-            if (hasThoughtDomAlready && !xhrInstance._thoughtPhaseFlushed && (now - xhrInstance._lastAllowedFlushTs > 2200)) {
-                xhrInstance._thoughtPhaseFlushed = true;
+            if (gate.allow) {
                 xhrInstance._lastAllowedFlushTs = now;
-                xhrInstance._cachedFlushedText = realText;
-                return realText;
-            }
-
-            if (diag.forceFlushNow || isEarlyThinkingWindow) {
-                diag.forceFlushNow = false;
-                xhrInstance._lastAllowedFlushTs = now;
-                xhrInstance._cachedFlushedText = realText;
-                updateStreamBufferHud(true, len);
-                return realText;
+                xhrInstance._cachedFlushedText = gate.customSlice !== undefined ? gate.customSlice : realText;
+                updateStreamBufferHud(gate.showHud, len);
+                return xhrInstance._cachedFlushedText;
             }
 
             diag.bufferedChunksSuppressed++;
             diag.bufferedBytesCurrent = len;
-            updateStreamBufferHud(true, len);
+            updateStreamBufferHud(gate.showHud, len);
             return xhrInstance._cachedFlushedText || '';
         }
 
@@ -453,21 +567,26 @@
             });
         }
 
-        function shouldAllowStreamEventNow(xhr) {
-            if (!hypVirtualStreamBuffer || !xhr._isAiGenStream || !diag.isStreamingNow) return true;
-            if (xhr.readyState === 4) { updateStreamBufferHud(false, 0); return true; }
-            if (diag.forceFlushNow) return true;
+        function shouldAllowStreamEventNow(xhr, evtType) {
+            if (!hypVirtualStreamBuffer || !xhr._isAiGenStream) return true;
+            if (xhr.readyState === 4 || evtType === 'load' || evtType === 'loadend') {
+                flushFinalProgressToListeners(xhr);
+                return true;
+            }
             const now = performance.now();
             if (!diag.streamStartTs) diag.streamStartTs = now;
-            if (now - (xhr._lastAllowedEventTs || 0) > 1800 && (now - diag.streamStartTs < 7000)) {
+            const rt = respTextDesc?.get ? (respTextDesc.get.call(xhr) || '') : '';
+            const gate = evaluateProseAndCodeGate(xhr, rt);
+
+            if (gate.allow) {
                 xhr._lastAllowedEventTs = now;
+                xhr._lastAllowedFlushTs = now;
+                xhr._cachedFlushedText = gate.customSlice !== undefined ? gate.customSlice : rt;
+                updateStreamBufferHud(gate.showHud, rt.length);
                 return true;
             }
             diag.bufferedChunksSuppressed++;
-            if (respTextDesc?.get) {
-                const rt = respTextDesc.get.call(xhr);
-                updateStreamBufferHud(true, rt ? rt.length : 0);
-            }
+            updateStreamBufferHud(gate.showHud, rt.length);
             return false;
         }
 
@@ -477,7 +596,7 @@
                 set: function(fn) {
                     if (typeof fn === 'function') {
                         return onReadyDesc.set.call(this, function(evt) {
-                            if (!shouldAllowStreamEventNow(this)) return;
+                            if (!shouldAllowStreamEventNow(this, 'readystatechange')) return;
                             return fn.call(this, evt);
                         });
                     }
@@ -491,9 +610,10 @@
             Object.defineProperty(XHRProto, 'onprogress', {
                 get: function() { return onProgDesc.get.call(this); },
                 set: function(fn) {
+                    this._origOnProgressFn = fn;
                     if (typeof fn === 'function') {
                         return onProgDesc.set.call(this, function(evt) {
-                            if (!shouldAllowStreamEventNow(this)) return;
+                            if (!shouldAllowStreamEventNow(this, 'progress')) return;
                             return fn.call(this, evt);
                         });
                     }
@@ -507,31 +627,48 @@
             const origAdd = XHRProto[methodName];
             if (!origAdd) return;
             XHRProto[methodName] = function(type, listener, ...rest) {
-                if ((type === 'progress' || type === 'readystatechange') && typeof listener === 'function') {
-                    const wrapped = function(evt) {
-                        if (!shouldAllowStreamEventNow(this)) return;
-                        return listener.call(this, evt);
-                    };
-                    return origAdd.call(this, type, wrapped, ...rest);
+                if (typeof listener === 'function') {
+                    if (type === 'progress') {
+                        if (!this._savedProgListeners) this._savedProgListeners = [];
+                        this._savedProgListeners.push(listener);
+                    }
+                    if (type === 'progress' || type === 'readystatechange' || type === 'load') {
+                        const wrapped = function(evt) {
+                            if (!shouldAllowStreamEventNow(this, type)) return;
+                            return listener.call(this, evt);
+                        };
+                        return origAdd.call(this, type, wrapped, ...rest);
+                    }
                 }
                 return origAdd.call(this, type, listener, ...rest);
             };
         });
     } catch (e) {}
 
+    // H10 + Background Tab rAF Keep-Alive:
+    // Когда вкладка скрыта в фоне (isTabActuallyHiddenInBrowser()), нативный requestAnimationFrame
+    // полностью замораживается браузером. Поэтому в фоне мы выполняем кадры через nativeSetTimeout!
     try {
         let q = [], timer = null;
         window.requestAnimationFrame = function(cb) {
+            const tabHiddenNow = isTabActuallyHiddenInBrowser();
+            if (hypBackgroundKeepAlive && tabHiddenNow) {
+                return nativeSetTimeout(() => {
+                    try { cb(performance.now()); } catch (e) {}
+                }, 65);
+            }
             if (hypCoalesceStreamRaf && diag.isStreamingNow && !diag.inBenchmarkMeasurement) {
                 q.push(cb);
                 if (!timer) {
                     timer = nativeSetTimeout(() => {
                         timer = null;
-                        nativeRAF((ts) => {
+                        const runBatch = (ts) => {
                             const batch = q; q = [];
                             for (let i = 0; i < batch.length; i++) { try { batch[i](ts); } catch (e) {} }
-                        });
-                    }, 180);
+                        };
+                        if (isTabActuallyHiddenInBrowser()) runBatch(performance.now());
+                        else nativeRAF(runBatch);
+                    }, 160);
                 }
                 return Math.floor(Math.random() * 1e6);
             }
@@ -699,15 +836,6 @@
                 ms-stt-button button.visible {
                     background: rgba(213, 0, 0, 0.25) !important;
                     outline: 2px solid #ff5252 !important;
-                }
-            `;
-        }
-        if (hypVirtualStreamBuffer) {
-            css += `
-                body.ai-studio-is-streaming ms-chat-turn:last-of-type ms-code-block pre {
-                    content-visibility: hidden !important;
-                    height: 36px !important;
-                    overflow: hidden !important;
                 }
             `;
         }
@@ -1028,7 +1156,7 @@
     function buildInstantAiReportObject() {
         const vis = getMessages();
         return {
-            report_version: '6.1.0-i18n-fork',
+            report_version: '6.3.0-prose-first-code-gate',
             timestamp: new Date().toISOString(),
             session_scale: {
                 turns_total_known: vis.length + detachedMessages.length,
@@ -1097,7 +1225,7 @@
             const totalMs = Math.round(performance.now() - startT);
             const clean = deltas.slice(1), avg = clean.reduce((a, b) => a + b, 0) / (clean.length || 1);
             diag.benchmarkHistory.push({
-                run_id: diag.benchmarkHistory.length + 1, run_type: 'DETERMINISTIC_STREAM_V610',
+                run_id: diag.benchmarkHistory.length + 1, run_type: 'DETERMINISTIC_STREAM_V620',
                 total_wall_time_ms: totalMs,
                 avg_fps_during_stream: Math.round((clean.length / (totalMs / 1000)) * 10) / 10,
                 avg_frame_ms: Math.round(avg * 10) / 10,
@@ -1111,7 +1239,7 @@
             await safeClipboardWrite(md);
             if (autoSendAfter) {
                 await new Promise(r => nativeSetTimeout(r, 1200));
-                await sendTextToAiChat("🤖 **[AUTO-TELEMETRY REPORT v6.1.0]**\n\n" + md);
+                await sendTextToAiChat("🤖 **[AUTO-TELEMETRY REPORT v6.2.0]**\n\n" + md);
             }
             if (btnEl) {
                 btnEl.innerText = '✅ OK!';
@@ -1393,6 +1521,7 @@
             togglesBox.appendChild(row);
         }
 
+        createHumanToggle(() => tr().t0Title, () => tr().t0Sub, hypBackgroundKeepAlive, v => { hypBackgroundKeepAlive = v; saveConfig(); });
         createHumanToggle(() => tr().t1Title, () => tr().t1Sub, hypVirtualStreamBuffer, v => { hypVirtualStreamBuffer = v; saveConfig(); applyHypothesisStyles(); });
         createHumanToggle(() => tr().t2Title, () => tr().t2Sub, hypKillInfiniteAnim && hypKillBackdropBlur && hypKillMicCanvas, v => { hypKillInfiniteAnim = v; hypKillBackdropBlur = v; hypKillMicCanvas = v; saveConfig(); applyHypothesisStyles(); });
         createHumanToggle(() => tr().t3Title, () => tr().t3Sub, hypAutoRepairMarkdown, v => { hypAutoRepairMarkdown = v; saveConfig(); if (v) repairUnparsedCodeBlocks(); });
@@ -1423,7 +1552,7 @@
             () => tr().btnSnap,
             async () => {
                 const md = FENCE + 'json\n' + JSON.stringify(buildInstantAiReportObject(), null, 2) + '\n' + FENCE;
-                await sendTextToAiChat("🤖 **[TELEMETRY REPORT v6.1.0]**\n\n" + md);
+                await sendTextToAiChat("🤖 **[TELEMETRY REPORT v6.2.0]**\n\n" + md);
             },
             '#1565c0',
             () => tr().ttSnapTitle, () => tr().ttSnapBody
