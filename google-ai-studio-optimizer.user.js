@@ -1,52 +1,63 @@
 // ==UserScript==
-// @name         Google AI Studio - Ultimate Optimizer UI
-// @namespace    http://tampermonkey.net/
-// @version      5.17
-// @description  Reduce lag + Collapse code + Restore + Power-User Export (JSON/MD)
+// @name         Google AI Studio - Ultimate Optimizer UI (Stream Buffer & GPU Saver Fork)
+// @namespace    https://github.com/lagovi/Google-AI-Studio-Optimizer
+// @version      6.0.0
+// @description  Zero-CPU Stream Buffering + Idle GPU Saver + Draggable UI + Rich Tooltips + DOM Optimizer + MD/JSON Export. Fork of Kfayyy's Ultimate Optimizer UI.
 // @match        https://aistudio.google.com/*
-// @author       Kfayyy
-// @downloadURL  https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js
-// @updateURL    https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js
+// @author       lagovi (Original author: Kfayyy - https://github.com/Kfayyy/Google-AI-Studio-Optimizer)
 // @license      MIT
 // @icon         https://aistudio.google.com/favicon.ico
 // @grant        none
+// @run-at       document-start
+// @downloadURL  https://raw.githubusercontent.com/lagovi/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js
+// @updateURL    https://raw.githubusercontent.com/lagovi/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js
 // ==/UserScript==
+
+/*
+ * Credits & Attribution:
+ * Based on "Google AI Studio - Ultimate Optimizer UI" (v5.17) by Kfayyy
+ * Original Repository: https://github.com/Kfayyy/Google-AI-Studio-Optimizer
+ * Original GreasyFork: https://greasyfork.org/scripts/578144
+ *
+ * Major enhancements in v6.0.0 Fork:
+ * 1. Two-Phase Virtual Stream Buffer (XHR responseText lock): eliminates O(N^2) DOM/Markdown re-parsing during streaming (reduces main-thread CPU blocking from 53.6% to 1.0%).
+ * 2. Idle GPU & CPU Saver: freezes infinite decorative CSS animations, disables heavy backdrop-filter blur, and blocks 60fps 2D-canvas draws on the microphone button.
+ * 3. MutationObserver & Lazy Markdown Fix: eliminates background 100ms full-chat Markdown parsing during typing/streaming.
+ * 4. Draggable UI with persistent coordinates, Rich Hover Tooltips, Smart Scroll Parking, and Auto-Repair for unrendered large code blocks.
+ */
 
 (function() {
     'use strict';
 
-    // ==============================
-    // ⚙️ CONFIGURATION PERSISTANTE
-    // ==============================
-    const CONFIG_KEY = 'ai_studio_optimizer_config';
+    const FENCE = '\x60\x60\x60';
+    const CONFIG_KEY = 'ai_studio_optimizer_config_v600';
 
-    let BASE_MAX_VISIBLE = 35;
-    let MAX_VISIBLE = 35;
-    let MAX_CACHE = 50;
-    let RESTORE_COUNT = 10;
-    let enabled = true;
-    
-    // Options d'export
-    let expIncludeThoughts = false;
-    let expIncludeSystem = true;
-    let expRemoveEmojis = false;
-    let expFormat = 'md'; // 'md' ou 'json'
+    let BASE_MAX_VISIBLE = 15, MAX_VISIBLE = 15, MAX_CACHE = 50, RESTORE_COUNT = 10, enabled = true;
+    let hypKillInfiniteAnim = true, hypKillBackdropBlur = true, hypSmartObserver = true, hypLazyMarkdown = true;
+    let hypSafeTurnIsolate = true, hypPromptContainment = true, hypKillMicCanvas = true;
+    let hypThrottleAutoscroll = true, hypCoalesceStreamRaf = true, hypAutoRepairMarkdown = true;
+    let hypVirtualStreamBuffer = true;
+    let smartScrollParkOnFinish = true;
+
+    let expIncludeThoughts = false, expIncludeSystem = true, expRemoveEmojis = false, expFormat = 'md';
+    let posTopPill = null, posBottomBtn = null;
 
     function loadConfig() {
         try {
-            const saved = localStorage.getItem(CONFIG_KEY);
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                BASE_MAX_VISIBLE = parsed.BASE_MAX_VISIBLE ?? 35;
-                MAX_CACHE = parsed.MAX_CACHE ?? 50;
-                RESTORE_COUNT = parsed.RESTORE_COUNT ?? 10;
-                enabled = parsed.enabled ?? true;
-                
-                expIncludeThoughts = parsed.expIncludeThoughts ?? false;
-                expIncludeSystem = parsed.expIncludeSystem ?? true;
-                expRemoveEmojis = parsed.expRemoveEmojis ?? false;
-                expFormat = parsed.expFormat ?? 'md';
-            }
+            const p = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+            BASE_MAX_VISIBLE = p.BASE_MAX_VISIBLE ?? 15; MAX_CACHE = p.MAX_CACHE ?? 50;
+            RESTORE_COUNT = p.RESTORE_COUNT ?? 10; enabled = p.enabled ?? true;
+            hypKillInfiniteAnim = p.hypKillInfiniteAnim ?? true; hypKillBackdropBlur = p.hypKillBackdropBlur ?? true;
+            hypSmartObserver = p.hypSmartObserver ?? true; hypLazyMarkdown = p.hypLazyMarkdown ?? true;
+            hypSafeTurnIsolate = p.hypSafeTurnIsolate ?? true; hypPromptContainment = p.hypPromptContainment ?? true;
+            hypKillMicCanvas = p.hypKillMicCanvas ?? true; hypThrottleAutoscroll = p.hypThrottleAutoscroll ?? true;
+            hypCoalesceStreamRaf = p.hypCoalesceStreamRaf ?? true; hypAutoRepairMarkdown = p.hypAutoRepairMarkdown ?? true;
+            hypVirtualStreamBuffer = p.hypVirtualStreamBuffer ?? true;
+            smartScrollParkOnFinish = p.smartScrollParkOnFinish ?? true;
+            expIncludeThoughts = p.expIncludeThoughts ?? false; expIncludeSystem = p.expIncludeSystem ?? true;
+            expRemoveEmojis = p.expRemoveEmojis ?? false; expFormat = p.expFormat ?? 'md';
+            posTopPill = p.posTopPill || null;
+            posBottomBtn = p.posBottomBtn || null;
         } catch (e) {}
         MAX_VISIBLE = BASE_MAX_VISIBLE;
     }
@@ -55,200 +66,678 @@
         try {
             localStorage.setItem(CONFIG_KEY, JSON.stringify({
                 BASE_MAX_VISIBLE, MAX_CACHE, RESTORE_COUNT, enabled,
-                expIncludeThoughts, expIncludeSystem, expRemoveEmojis, expFormat
+                hypKillInfiniteAnim, hypKillBackdropBlur, hypSmartObserver, hypLazyMarkdown,
+                hypSafeTurnIsolate, hypPromptContainment, hypKillMicCanvas,
+                hypThrottleAutoscroll, hypCoalesceStreamRaf, hypAutoRepairMarkdown,
+                hypVirtualStreamBuffer, smartScrollParkOnFinish,
+                expIncludeThoughts, expIncludeSystem, expRemoveEmojis, expFormat,
+                posTopPill, posBottomBtn
             }));
         } catch (e) {}
     }
-
     loadConfig();
 
-    // ==============================
-    // 🧠 GESTION MÉMOIRE & CACHE
-    // ==============================
+    const diag = {
+        lastInteraction: performance.now(), mutationsPerSec: 0, _mutationCount: 0,
+        longTasksCount: 0, longTaskTotalMs: 0, _longTaskWindowMs: 0, eventLoopLagMs: 0,
+        cpuBusyPercentEst: 0, scriptSelfTimeMs: 0, _scriptSelfTimeAccum: 0,
+        runningAnimations: [], micCanvasDrawsPerSec: 0, _micCanvasDrawCount: 0,
+        scrollWritesBlockedPerSec: 0, _scrollWritesBlockedCount: 0,
+        bufferedChunksSuppressed: 0, bufferedBytesCurrent: 0,
+        repairedBlocksCount: 0, domNodesCount: 0, isStreamingNow: false, inBenchmarkMeasurement: false,
+        streamStartTs: 0, forceFlushNow: false,
+        lastScanTick: 0, benchmarkHistory: []
+    };
 
-    let hiddenMessages = [];
-    let detachedMessages = []; 
-    let chatContainerRef = null;
-    const exportedTurns = new Map();
+    const nativeRAF = window.requestAnimationFrame.bind(window);
+    const nativeSetTimeout = window.setTimeout.bind(window);
 
-    function debounce(func, wait) {
-        let timeout;
-        return function(...args) {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => func.apply(this, args), wait);
-        };
-    }
-
-    function getMessages() {
-        return Array.from(document.querySelectorAll('ms-chat-turn'));
-    }
-
-    function updateRestoreBtnLabel() {
-        if (typeof restoreBtn !== 'undefined' && restoreBtn) {
-            const total = hiddenMessages.length + detachedMessages.length;
-            restoreBtn.innerText = '⬆ Restore (' + total + ' dispo)';
+    async function safeClipboardWrite(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+                return true;
+            } catch (e2) { return false; }
         }
     }
 
-    function updateCollectedTurns() {
-        const turns = document.querySelectorAll('ms-chat-turn');
-        
-        for (let i = 0; i < turns.length; i++) {
-            const turn = turns[i];
-            const turnId = turn.id;
-            if (!turnId) continue;
+    function makeElementDraggable(el, initialSavedPos, onSavePos) {
+        if (initialSavedPos && typeof initialSavedPos.left === 'number' && typeof initialSavedPos.top === 'number') {
+            el.style.left = Math.min(window.innerWidth - 60, Math.max(5, initialSavedPos.left)) + 'px';
+            el.style.top = Math.min(window.innerHeight - 40, Math.max(5, initialSavedPos.top)) + 'px';
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+            el.style.transform = 'none';
+        }
 
-            const contentRoot = turn.querySelector('ms-prompt-chunk, .text-chunk, ms-text-chunk');
-            if (!contentRoot) continue; 
+        let startX = 0, startY = 0, origLeft = 0, origTop = 0, isDragging = false, moved = false;
 
-            const rawText = contentRoot.textContent;
-            if (!rawText || !rawText.trim()) continue; 
+        el.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            const rect = el.getBoundingClientRect();
+            startX = e.clientX; startY = e.clientY;
+            origLeft = rect.left; origTop = rect.top;
+            isDragging = true; moved = false;
 
-            let role = 'Unknown';
-            if (turn.querySelector('[data-turn-role="User"], .user, .user-prompt-container')) role = 'User';
-            else if (turn.querySelector('[data-turn-role="Model"], .model, .model-prompt-container')) role = 'Gemini';
+            const onMove = (me) => {
+                if (!isDragging) return;
+                const dx = me.clientX - startX, dy = me.clientY - startY;
+                if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                    moved = true;
+                    const newLeft = Math.min(window.innerWidth - rect.width - 4, Math.max(4, origLeft + dx));
+                    const newTop = Math.min(window.innerHeight - rect.height - 4, Math.max(4, origTop + dy));
+                    el.style.left = newLeft + 'px';
+                    el.style.top = newTop + 'px';
+                    el.style.right = 'auto';
+                    el.style.bottom = 'auto';
+                    el.style.transform = 'none';
+                }
+            };
 
-            const signature = rawText.length + '-' + role;
-            const existing = exportedTurns.get(turnId);
-            if (existing && existing.signature === signature) continue; 
+            const onUp = () => {
+                if (!isDragging) return;
+                isDragging = false;
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                if (moved) {
+                    const finalRect = el.getBoundingClientRect();
+                    onSavePos({ left: Math.round(finalRect.left), top: Math.round(finalRect.top) });
+                }
+            };
 
-            let thoughtsText = '';
-            const thoughtNode = turn.querySelector('ms-thought-chunk');
-            if (thoughtNode) {
-                const body = thoughtNode.querySelector('.mat-expansion-panel-body, ms-text-chunk');
-                if (body) thoughtsText = htmlToMarkdown(body).replace(/\n{3,}/g, '\n\n').trim();
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }, true);
+
+        el.addEventListener('click', (e) => {
+            if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+        }, true);
+    }
+
+    let tooltipEl = null;
+    function attachTooltip(targetEl, titleText, bodyText) {
+        targetEl.addEventListener('mouseenter', () => {
+            if (!tooltipEl && document.body) {
+                tooltipEl = document.createElement('div');
+                Object.assign(tooltipEl.style, {
+                    position: 'fixed', zIndex: 100005, background: '#111318', color: '#e8eaed',
+                    padding: '10px 14px', borderRadius: '10px', border: '1px solid #4a5568',
+                    boxShadow: '0 8px 28px rgba(0,0,0,0.85)', maxWidth: '340px', fontSize: '12px',
+                    fontFamily: 'sans-serif', lineHeight: '1.45', pointerEvents: 'none', display: 'none'
+                });
+                document.body.appendChild(tooltipEl);
             }
+            if (!tooltipEl) return;
+            tooltipEl.textContent = '';
+            const t = document.createElement('div');
+            t.style.fontWeight = 'bold'; t.style.color = '#64ffda'; t.style.marginBottom = '4px';
+            t.textContent = titleText;
+            const b = document.createElement('div');
+            b.style.color = '#cbd5e1';
+            b.textContent = bodyText;
+            tooltipEl.appendChild(t); tooltipEl.appendChild(b);
+            tooltipEl.style.display = 'block';
 
-            let text = htmlToMarkdown(contentRoot).replace(/\n{3,}/g, '\n\n').trim();
-            if (!text && !thoughtsText) continue;
-
-            exportedTurns.set(turnId, { role, thoughts: thoughtsText, markdown: text, signature });
-        }
+            const rect = targetEl.getBoundingClientRect();
+            const ttRect = tooltipEl.getBoundingClientRect();
+            let left = rect.left + (rect.width / 2) - (ttRect.width / 2);
+            let top = rect.bottom + 10;
+            if (top + ttRect.height > window.innerHeight - 10) top = rect.top - ttRect.height - 10;
+            left = Math.max(10, Math.min(window.innerWidth - ttRect.width - 10, left));
+            tooltipEl.style.left = left + 'px';
+            tooltipEl.style.top = top + 'px';
+        });
+        targetEl.addEventListener('mouseleave', () => {
+            if (tooltipEl) tooltipEl.style.display = 'none';
+        });
     }
 
-    const debouncedCapture = debounce(updateCollectedTurns, 100);
+    let streamStatusCard = null, streamStatusTitle = null;
 
-    function restoreFullDOM() {
-        const currentMessages = getMessages();
-        const referenceNode = currentMessages.length > 0 ? currentMessages[0] : null;
-        const container = referenceNode ? referenceNode.parentNode : chatContainerRef;
-
-        if (detachedMessages.length > 0 && container) {
-            detachedMessages.forEach(el => {
-                if (referenceNode) container.insertBefore(el, referenceNode);
-                else container.appendChild(el);
-            });
-            detachedMessages = [];
-        }
-        getMessages().forEach(el => el.style.display = '');
-        hiddenMessages = [];
-        updateRestoreBtnLabel();
-    }
-
-    function optimizeDOM() {
-        if (!enabled) return;
-
-        const messages = getMessages();
-        
-        if (messages.length <= MAX_VISIBLE) {
-            messages.forEach(el => { if (el.style.display === 'none') el.style.display = ''; });
-            hiddenMessages = [];
-            updateRestoreBtnLabel();
-            return;
-        }
-
-        const toHide = messages.length - MAX_VISIBLE;
-        hiddenMessages = [];
-
-        messages.forEach((el, index) => {
-            if (index < toHide) {
-                if (el.style.display !== 'none') el.style.display = 'none';
-                hiddenMessages.push(el);
-            } else {
-                if (el.style.display === 'none') el.style.display = '';
-            }
+    function ensureStreamStatusCard() {
+        if (streamStatusCard && document.body?.contains(streamStatusCard)) return streamStatusCard;
+        if (!document.body) return null;
+        streamStatusCard = document.createElement('div');
+        Object.assign(streamStatusCard.style, {
+            position: 'fixed', bottom: '86px', left: '50%', transform: 'translateX(-50%)',
+            background: '#162220', color: '#e0f2f1', padding: '8px 16px', borderRadius: '20px',
+            fontFamily: 'sans-serif', fontSize: '12.5px', zIndex: 99998,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.6)', border: '1px solid #00897b',
+            display: 'none', alignItems: 'center', gap: '14px'
         });
 
-        if (hiddenMessages.length > MAX_CACHE) {
-            const excess = hiddenMessages.length - MAX_CACHE;
-            const toPurge = hiddenMessages.slice(0, excess);
-            toPurge.forEach(el => {
-                if (!chatContainerRef && el.parentNode) chatContainerRef = el.parentNode;
-                el.remove(); 
-                detachedMessages.push(el); 
-            });
-            hiddenMessages = hiddenMessages.slice(excess);
-        }
-        updateRestoreBtnLabel();
+        streamStatusTitle = document.createElement('span');
+        streamStatusTitle.style.fontWeight = 'bold';
+        streamStatusTitle.style.color = '#64ffda';
+
+        const flushBtn = document.createElement('button');
+        flushBtn.textContent = '👁️ Показать уже принятый текст';
+        Object.assign(flushBtn.style, {
+            background: '#00695c', color: '#fff', border: '1px solid #26a69a', borderRadius: '14px',
+            padding: '4px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flexShrink: 0
+        });
+        attachTooltip(
+            flushBtn,
+            'Принудительно отрисовать текущую часть ответа',
+            'Пока идёт генерация, скрипт копит текст ответа в лёгком буфере, чтобы браузер не тормозил на каждом слове. Нажмите сюда, если хотите прочитать начало ответа прямо сейчас.'
+        );
+        flushBtn.onclick = () => {
+            diag.forceFlushNow = true;
+            flushBtn.textContent = '⚡ Отрисовано!';
+            nativeSetTimeout(() => { flushBtn.textContent = '👁️ Показать уже принятый текст'; }, 1200);
+        };
+
+        streamStatusCard.appendChild(streamStatusTitle);
+        streamStatusCard.appendChild(flushBtn);
+        document.body.appendChild(streamStatusCard);
+        return streamStatusCard;
     }
 
-    const debouncedOptimizeDOM = debounce(optimizeDOM, 200);
+    function updateStreamBufferHud(active, bytesCount) {
+        const card = ensureStreamStatusCard();
+        if (!card) return;
+        if (!active || !diag.isStreamingNow) {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = 'flex';
+        const kb = (bytesCount / 1024).toFixed(1);
+        const elapsedSec = Math.max(1, Math.round((performance.now() - (diag.streamStartTs || performance.now())) / 1000));
+        streamStatusTitle.textContent = `⚡ Принимаем ответ ИИ без нагрузки на процессор: ${kb} КБ (${elapsedSec} сек)`;
+    }
+
+    try {
+        const XHRProto = window.XMLHttpRequest.prototype;
+        const origOpen = XHRProto.open;
+        const respTextDesc = Object.getOwnPropertyDescriptor(XHRProto, 'responseText');
+        const respDesc = Object.getOwnPropertyDescriptor(XHRProto, 'response');
+        const onReadyDesc = Object.getOwnPropertyDescriptor(XHRProto, 'onreadystatechange');
+        const onProgDesc = Object.getOwnPropertyDescriptor(XHRProto, 'onprogress');
+
+        XHRProto.open = function(method, url, ...rest) {
+            this._aiLabUrl = String(url || '');
+            this._isAiGenStream = /GenerateContent|StreamGenerate/i.test(this._aiLabUrl) && !/CountTokens|Upload/i.test(this._aiLabUrl);
+            this._lastAllowedFlushTs = 0;
+            this._cachedFlushedText = '';
+            this._thoughtPhaseFlushed = false;
+            return origOpen.call(this, method, url, ...rest);
+        };
+
+        function getSmartBufferedText(xhrInstance, realText) {
+            if (!hypVirtualStreamBuffer || !xhrInstance._isAiGenStream || !diag.isStreamingNow || xhrInstance.readyState !== 3) {
+                if (xhrInstance._isAiGenStream && xhrInstance.readyState === 4) {
+                    updateStreamBufferHud(false, 0);
+                }
+                return realText;
+            }
+            if (!diag.streamStartTs) diag.streamStartTs = performance.now();
+            const now = performance.now();
+            const len = realText ? realText.length : 0;
+
+            const isEarlyThinkingWindow = !xhrInstance._thoughtPhaseFlushed && (now - diag.streamStartTs < 7000) && (now - xhrInstance._lastAllowedFlushTs > 1800);
+            const hasThoughtDomAlready = Boolean(document.querySelector('ms-chat-turn:last-of-type ms-thought-chunk'));
+            if (hasThoughtDomAlready && !xhrInstance._thoughtPhaseFlushed && (now - xhrInstance._lastAllowedFlushTs > 2200)) {
+                xhrInstance._thoughtPhaseFlushed = true;
+                xhrInstance._lastAllowedFlushTs = now;
+                xhrInstance._cachedFlushedText = realText;
+                return realText;
+            }
+
+            if (diag.forceFlushNow || isEarlyThinkingWindow) {
+                diag.forceFlushNow = false;
+                xhrInstance._lastAllowedFlushTs = now;
+                xhrInstance._cachedFlushedText = realText;
+                updateStreamBufferHud(true, len);
+                return realText;
+            }
+
+            diag.bufferedChunksSuppressed++;
+            diag.bufferedBytesCurrent = len;
+            updateStreamBufferHud(true, len);
+            return xhrInstance._cachedFlushedText || '';
+        }
+
+        if (respTextDesc && respTextDesc.get) {
+            Object.defineProperty(XHRProto, 'responseText', {
+                get: function() { return getSmartBufferedText(this, respTextDesc.get.call(this)); },
+                configurable: true
+            });
+        }
+
+        if (respDesc && respDesc.get) {
+            Object.defineProperty(XHRProto, 'response', {
+                get: function() {
+                    const realResp = respDesc.get.call(this);
+                    if (typeof realResp === 'string') return getSmartBufferedText(this, realResp);
+                    return realResp;
+                },
+                configurable: true
+            });
+        }
+
+        function shouldAllowStreamEventNow(xhr) {
+            if (!hypVirtualStreamBuffer || !xhr._isAiGenStream || !diag.isStreamingNow) return true;
+            if (xhr.readyState === 4) {
+                updateStreamBufferHud(false, 0);
+                return true;
+            }
+            if (diag.forceFlushNow) return true;
+            const now = performance.now();
+            if (!diag.streamStartTs) diag.streamStartTs = now;
+            if (now - (xhr._lastAllowedEventTs || 0) > 1800 && (now - diag.streamStartTs < 7000)) {
+                xhr._lastAllowedEventTs = now;
+                return true;
+            }
+            diag.bufferedChunksSuppressed++;
+            if (respTextDesc?.get) {
+                const rt = respTextDesc.get.call(xhr);
+                updateStreamBufferHud(true, rt ? rt.length : 0);
+            }
+            return false;
+        }
+
+        if (onReadyDesc && onReadyDesc.set) {
+            Object.defineProperty(XHRProto, 'onreadystatechange', {
+                get: function() { return onReadyDesc.get.call(this); },
+                set: function(fn) {
+                    if (typeof fn === 'function') {
+                        return onReadyDesc.set.call(this, function(evt) {
+                            if (!shouldAllowStreamEventNow(this)) return;
+                            return fn.call(this, evt);
+                        });
+                    }
+                    return onReadyDesc.set.call(this, fn);
+                },
+                configurable: true
+            });
+        }
+
+        if (onProgDesc && onProgDesc.set) {
+            Object.defineProperty(XHRProto, 'onprogress', {
+                get: function() { return onProgDesc.get.call(this); },
+                set: function(fn) {
+                    if (typeof fn === 'function') {
+                        return onProgDesc.set.call(this, function(evt) {
+                            if (!shouldAllowStreamEventNow(this)) return;
+                            return fn.call(this, evt);
+                        });
+                    }
+                    return onProgDesc.set.call(this, fn);
+                },
+                configurable: true
+            });
+        }
+
+        ['addEventListener', '__zone_symbol__addEventListener'].forEach(methodName => {
+            const origAdd = XHRProto[methodName];
+            if (!origAdd) return;
+            XHRProto[methodName] = function(type, listener, ...rest) {
+                if ((type === 'progress' || type === 'readystatechange') && typeof listener === 'function') {
+                    const wrapped = function(evt) {
+                        if (!shouldAllowStreamEventNow(this)) return;
+                        return listener.call(this, evt);
+                    };
+                    return origAdd.call(this, type, wrapped, ...rest);
+                }
+                return origAdd.call(this, type, listener, ...rest);
+            };
+        });
+    } catch (e) {}
+
+    try {
+        let q = [], timer = null;
+        window.requestAnimationFrame = function(cb) {
+            if (hypCoalesceStreamRaf && diag.isStreamingNow && !diag.inBenchmarkMeasurement) {
+                q.push(cb);
+                if (!timer) {
+                    timer = nativeSetTimeout(() => {
+                        timer = null;
+                        nativeRAF((ts) => {
+                            const batch = q; q = [];
+                            for (let i = 0; i < batch.length; i++) { try { batch[i](ts); } catch (e) {} }
+                        });
+                    }, 180);
+                }
+                return Math.floor(Math.random() * 1e6);
+            }
+            return nativeRAF(cb);
+        };
+    } catch (e) {}
+
+    try {
+        let lastScrollTs = 0;
+        const shouldBlockScroll = () => {
+            if (!hypThrottleAutoscroll || !diag.isStreamingNow || diag.inBenchmarkMeasurement) return false;
+            const now = performance.now();
+            if (now - lastScrollTs < 800) { diag._scrollWritesBlockedCount++; return true; }
+            lastScrollTs = now; return false;
+        };
+        const stDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+        if (stDesc?.set && stDesc?.get) {
+            Object.defineProperty(Element.prototype, 'scrollTop', {
+                get() { return stDesc.get.call(this); },
+                set(v) { if (!shouldBlockScroll()) return stDesc.set.call(this, v); },
+                configurable: true
+            });
+        }
+        ['scrollTo', 'scrollBy', 'scrollIntoView'].forEach(m => {
+            const orig = Element.prototype[m];
+            if (orig) Element.prototype[m] = function(...a) { if (!shouldBlockScroll()) return orig.apply(this, a); };
+        });
+    } catch (e) {}
+
+    try {
+        ['clearRect', 'fillRect', 'stroke', 'fill', 'drawImage'].forEach(m => {
+            const orig = CanvasRenderingContext2D.prototype[m];
+            if (!orig) return;
+            CanvasRenderingContext2D.prototype[m] = function(...a) {
+                const c = this.canvas;
+                if (c && (c.width <= 64 || c.closest?.('ms-stt-button'))) {
+                    diag._micCanvasDrawCount++;
+                    if (hypKillMicCanvas) return;
+                }
+                return orig.apply(this, a);
+            };
+        });
+    } catch (e) {}
+
+    ['keydown', 'mousedown', 'wheel', 'touchstart', 'pointerdown'].forEach(evt => {
+        window.addEventListener(evt, () => { diag.lastInteraction = performance.now(); }, { passive: true, capture: true });
+    });
+
+    try {
+        new PerformanceObserver((list) => {
+            for (const e of list.getEntries()) {
+                diag.longTasksCount++; diag.longTaskTotalMs += Math.round(e.duration); diag._longTaskWindowMs += e.duration;
+            }
+        }).observe({ entryTypes: ['longtask'] });
+    } catch (e) {}
+
+    let lastTick = performance.now();
+    setInterval(() => {
+        const now = performance.now();
+        diag.eventLoopLagMs = Math.round(Math.max(0, (now - lastTick) - 250));
+        lastTick = now;
+        checkIsModelStreaming();
+    }, 250);
+
+    function parkScrollAtStartOfLastModelTurn() {
+        if (!smartScrollParkOnFinish) return;
+        try {
+            const turns = document.querySelectorAll('ms-chat-turn');
+            const lastTurn = turns[turns.length - 1];
+            if (!lastTurn) return;
+            const scrollEl = findScrollableChatContainer();
+            if (!scrollEl) return;
+            const turnRect = lastTurn.getBoundingClientRect();
+            const contRect = scrollEl.getBoundingClientRect ? scrollEl.getBoundingClientRect() : { top: 0 };
+            if (turnRect.top < contRect.top + 40) {
+                scrollEl.scrollTop += (turnRect.top - contRect.top - 60);
+            }
+        } catch (e) {}
+    }
+
+    function checkIsModelStreaming() {
+        const b = document.querySelector('ms-run-button button, button.run-button');
+        const streaming = Boolean(b && (/stop/i.test(b.textContent || '') || /stop/i.test(b.getAttribute('aria-label') || '')));
+        if (streaming !== diag.isStreamingNow) {
+            diag.isStreamingNow = streaming;
+            document.body?.classList.toggle('ai-studio-is-streaming', streaming);
+            if (streaming) {
+                diag.streamStartTs = performance.now();
+            } else {
+                diag.streamStartTs = 0;
+                updateStreamBufferHud(false, 0);
+                nativeSetTimeout(() => {
+                    if (hypAutoRepairMarkdown) repairUnparsedCodeBlocks();
+                    parkScrollAtStartOfLastModelTurn();
+                }, 300);
+            }
+        }
+        return streaming;
+    }
+
+    function repairUnparsedCodeBlocks() {
+        if (!hypAutoRepairMarkdown || diag.isStreamingNow) return;
+        const fenceRe = new RegExp(FENCE + '([a-zA-Z0-9_-]*)\\n([\\s\\S]*?)' + FENCE, 'g');
+        document.querySelectorAll('ms-chat-turn ms-text-chunk, ms-chat-turn .text-chunk').forEach(chunk => {
+            if (chunk.closest('ms-code-block') || chunk.dataset.repairedFence) return;
+            const txt = chunk.textContent || '';
+            if (!txt.includes(FENCE)) return;
+            const match = fenceRe.exec(txt);
+            if (match && match[2] && match[2].length > 80) {
+                chunk.dataset.repairedFence = '1';
+                diag.repairedBlocksCount++;
+                const wrapper = document.createElement('div');
+                Object.assign(wrapper.style, {
+                    background: '#141418', border: '1px solid #3a3a48', borderRadius: '8px',
+                    margin: '10px 0', overflow: 'hidden'
+                });
+                const bar = document.createElement('div');
+                Object.assign(bar.style, {
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '6px 12px', background: '#22222a', borderBottom: '1px solid #333', fontSize: '12px', color: '#80cbc4'
+                });
+                const lbl = document.createElement('span');
+                lbl.textContent = `<> ${match[1] || 'Code'} (${match[2].split('\n').length} строк)`;
+                const cpBtn = document.createElement('button');
+                cpBtn.textContent = '📋 Копировать код';
+                Object.assign(cpBtn.style, {
+                    background: '#00695c', color: '#fff', border: 'none', borderRadius: '4px',
+                    padding: '4px 10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px'
+                });
+                const codeContent = match[2];
+                cpBtn.onclick = () => {
+                    safeClipboardWrite(codeContent);
+                    cpBtn.textContent = '✅ Скопировано!';
+                    nativeSetTimeout(() => { cpBtn.textContent = '📋 Копировать код'; }, 2000);
+                };
+                bar.appendChild(lbl); bar.appendChild(cpBtn);
+                const pre = document.createElement('pre');
+                Object.assign(pre.style, {
+                    margin: 0, padding: '10px 12px', maxHeight: '420px', overflow: 'auto',
+                    fontFamily: 'monospace', fontSize: '12px', color: '#e0e0e0', whiteSpace: 'pre'
+                });
+                pre.textContent = codeContent;
+                wrapper.appendChild(bar); wrapper.appendChild(pre);
+                chunk.parentElement?.insertBefore(wrapper, chunk);
+            }
+        });
+    }
+
+    const hypStyleEl = document.createElement('style');
+    function applyHypothesisStyles() {
+        let css = '';
+        if (hypKillInfiniteAnim) css += `*, *::before, *::after { animation-iteration-count: 1 !important; scroll-behavior: auto !important; }\n`;
+        if (hypKillBackdropBlur) css += `*, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }\n`;
+        if (hypSafeTurnIsolate) {
+            css += `ms-chat-turn:not(:hover):not(:focus-within):not(:nth-last-of-type(-n+2)) { contain: layout style !important; }\n`;
+            css += `body.ai-studio-is-streaming ms-items-scrollbar { display: none !important; }\n`;
+        }
+        if (hypPromptContainment) {
+            css += `footer, ms-prompt-box, .prompt-box-container, .input-area { contain: layout style !important; }\n`;
+            css += `footer textarea, ms-prompt-box textarea { max-height: 140px !important; overflow-y: auto !important; }\n`;
+        }
+        if (hypKillMicCanvas) {
+            css += `
+                ms-stt-button canvas { display: none !important; }
+                ms-stt-button button.visible {
+                    background: rgba(213, 0, 0, 0.25) !important;
+                    outline: 2px solid #ff5252 !important;
+                }
+            `;
+        }
+        if (hypVirtualStreamBuffer) {
+            css += `
+                body.ai-studio-is-streaming ms-chat-turn:last-of-type ms-code-block pre {
+                    content-visibility: hidden !important;
+                    height: 36px !important;
+                    overflow: hidden !important;
+                }
+            `;
+        }
+        hypStyleEl.textContent = css;
+        if (document.head && !document.head.contains(hypStyleEl)) document.head.appendChild(hypStyleEl);
+    }
+
+    let hiddenMessages = [], detachedMessages = [], chatContainerRef = null, lastUrl = location.href;
+    let inChatRestoreBanner = null;
+    const exportedTurns = new Map();
+    const debounce = (fn, w) => { let t; return (...a) => { clearTimeout(t); t = nativeSetTimeout(() => fn(...a), w); }; };
+    const getMessages = () => Array.from(document.querySelectorAll('ms-chat-turn'));
+
+    function ensureInChatRestoreBanner() {
+        if (!inChatRestoreBanner) {
+            inChatRestoreBanner = document.createElement('div');
+            Object.assign(inChatRestoreBanner.style, {
+                display: 'none', justifyContent: 'center', alignItems: 'center', gap: '12px',
+                padding: '8px 16px', margin: '10px auto', maxWidth: '580px', borderRadius: '20px',
+                background: '#1e242b', border: '1px solid #37474f', color: '#90caf9',
+                fontSize: '12px', fontFamily: 'sans-serif', zIndex: 10
+            });
+            const lbl = document.createElement('span');
+            lbl.id = 'ai-opt-banner-lbl';
+            const btnMore = document.createElement('button');
+            btnMore.textContent = `+ Показать ещё ${RESTORE_COUNT}`;
+            Object.assign(btnMore.style, {
+                background: '#1565c0', color: '#fff', border: 'none', borderRadius: '12px',
+                padding: '4px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold'
+            });
+            btnMore.onclick = (e) => { e.stopPropagation(); restoreMessages(); };
+
+            const btnAll = document.createElement('button');
+            btnAll.textContent = 'Показать все';
+            Object.assign(btnAll.style, {
+                background: '#37474f', color: '#fff', border: 'none', borderRadius: '12px',
+                padding: '4px 10px', cursor: 'pointer', fontSize: '11px'
+            });
+            btnAll.onclick = (e) => { e.stopPropagation(); restoreFullDOM(); };
+
+            inChatRestoreBanner.appendChild(lbl);
+            inChatRestoreBanner.appendChild(btnMore);
+            inChatRestoreBanner.appendChild(btnAll);
+        }
+        return inChatRestoreBanner;
+    }
+
+    function updateUiCounters() {
+        const hiddenTotal = hiddenMessages.length + detachedMessages.length;
+        const visCount = getMessages().filter(t => t.style.display !== 'none').length;
+        if (restoreBtn) restoreBtn.innerText = `⬆ Показать ещё +${RESTORE_COUNT} старых (скрыто: ${hiddenTotal})`;
+        if (headerMainBtn) {
+            headerMainBtn.innerText = hiddenTotal > 0 ? `⚡ ${visCount} на экране | +${hiddenTotal} в архиве` : `⚡ Чат (${visCount})`;
+        }
+        const banner = ensureInChatRestoreBanner();
+        if (hiddenTotal > 0) {
+            const firstVis = getMessages().find(t => t.style.display !== 'none');
+            if (firstVis && firstVis.parentNode) {
+                if (banner.nextSibling !== firstVis) firstVis.parentNode.insertBefore(banner, firstVis);
+                banner.style.display = 'flex';
+                const lbl = banner.querySelector('#ai-opt-banner-lbl');
+                if (lbl) lbl.textContent = `⬆️ В архиве скрыто старых сообщений: ${hiddenTotal}`;
+            }
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+
+    function captureSingleTurn(turn) {
+        if (!turn?.id) return;
+        const root = turn.querySelector('ms-prompt-chunk, .text-chunk, ms-text-chunk');
+        if (!root?.textContent?.trim()) return;
+        let role = 'Unknown';
+        if (turn.querySelector('[data-turn-role="User"], .user, .user-prompt-container')) role = 'User';
+        else if (turn.querySelector('[data-turn-role="Model"], .model, .model-prompt-container')) role = 'Gemini';
+        const sig = root.textContent.length + '-' + role;
+        if (exportedTurns.get(turn.id)?.signature === sig) return;
+        let thoughts = '';
+        const tn = turn.querySelector('ms-thought-chunk .mat-expansion-panel-body, ms-thought-chunk ms-text-chunk');
+        if (tn) thoughts = htmlToMarkdown(tn).replace(/\n{3,}/g, '\n\n').trim();
+        let text = htmlToMarkdown(root).replace(/\n{3,}/g, '\n\n').trim();
+        if (!text && !thoughts) return;
+        exportedTurns.set(turn.id, { role, thoughts, markdown: text, signature: sig });
+    }
 
     function restoreMessages() {
         const totalAvailable = hiddenMessages.length + detachedMessages.length;
-        if (totalAvailable === 0) {
-            alert("Tout l'historique disponible est déjà affiché !"); return;
-        }
-
+        if (totalAvailable === 0) return;
         const count = Math.min(RESTORE_COUNT, totalAvailable);
-        MAX_VISIBLE += count; 
-
+        MAX_VISIBLE += count;
         const neededFromDetached = MAX_VISIBLE - getMessages().length;
         if (neededFromDetached > 0 && detachedMessages.length > 0) {
-            const actualToReattach = Math.min(neededFromDetached, detachedMessages.length);
-            const toReattach = detachedMessages.splice(-actualToReattach);
+            const toReattach = detachedMessages.splice(-Math.min(neededFromDetached, detachedMessages.length));
             const referenceNode = getMessages()[0];
-            
-            if (referenceNode && referenceNode.parentNode) {
-                toReattach.forEach(el => referenceNode.parentNode.insertBefore(el, referenceNode));
-            } else if (chatContainerRef) {
-                toReattach.forEach(el => chatContainerRef.appendChild(el));
-            }
+            if (referenceNode?.parentNode) toReattach.forEach(el => referenceNode.parentNode.insertBefore(el, referenceNode));
+            else if (chatContainerRef) toReattach.forEach(el => chatContainerRef.appendChild(el));
         }
         optimizeDOM();
     }
 
-    function cleanAgain() {
-        if (!enabled) {
-            enabled = true;
-            if (typeof toggleBtn !== 'undefined' && toggleBtn) {
-                toggleBtn.innerText = '⚡ Optimizer ON';
-                toggleBtn.style.background = '#3c3c3c';
-            }
-            saveConfig();
+    function restoreFullDOM() {
+        const cur = getMessages(), ref = cur[0] || null, cont = ref ? ref.parentNode : chatContainerRef;
+        if (detachedMessages.length && cont) {
+            detachedMessages.forEach(el => ref ? cont.insertBefore(el, ref) : cont.appendChild(el));
+            detachedMessages = [];
         }
-        MAX_VISIBLE = BASE_MAX_VISIBLE;
-        optimizeDOM();
+        getMessages().forEach(el => { el.style.display = ''; });
+        hiddenMessages = [];
+        MAX_VISIBLE = getMessages().length + 50;
+        updateUiCounters();
     }
 
-    // ==============================
-    // 📥 PARSER MARKDOWN & CHAT DATA
-    // ==============================
+    function optimizeDOM() {
+        const t0 = performance.now();
+        if (location.href !== lastUrl) {
+            lastUrl = location.href; hiddenMessages = []; detachedMessages = []; chatContainerRef = null; exportedTurns.clear(); MAX_VISIBLE = BASE_MAX_VISIBLE;
+        }
+        if (hypAutoRepairMarkdown && !diag.isStreamingNow) repairUnparsedCodeBlocks();
+        if (!enabled) { diag._scriptSelfTimeAccum += (performance.now() - t0); return; }
+        const msgs = getMessages();
+        if (msgs.length <= MAX_VISIBLE) {
+            msgs.forEach(el => { if (el.style.display === 'none') el.style.display = ''; });
+            hiddenMessages = []; updateUiCounters();
+            diag._scriptSelfTimeAccum += (performance.now() - t0); return;
+        }
+        const toHide = msgs.length - MAX_VISIBLE;
+        hiddenMessages = [];
+        msgs.forEach((el, i) => {
+            if (i < toHide) { if (el.style.display !== 'none') el.style.display = 'none'; hiddenMessages.push(el); }
+            else if (el.style.display === 'none') el.style.display = '';
+        });
+        if (hiddenMessages.length > MAX_CACHE) {
+            const excess = hiddenMessages.length - MAX_CACHE;
+            hiddenMessages.slice(0, excess).forEach(el => {
+                captureSingleTurn(el);
+                if (!chatContainerRef && el.parentNode) chatContainerRef = el.parentNode;
+                el.remove(); detachedMessages.push(el);
+            });
+            hiddenMessages = hiddenMessages.slice(excess);
+        }
+        updateUiCounters();
+        diag._scriptSelfTimeAccum += (performance.now() - t0);
+    }
+    const debouncedOptimizeDOM = debounce(optimizeDOM, 250);
 
     function getConversationTitle() {
         const titleEl = document.querySelector('.page-title h1, h1.mode-title');
         return titleEl ? titleEl.textContent.trim() : 'Google_AI_Studio_Export';
     }
 
-    // NOUVELLE FONCTION ULTRA-ROBUSTE DE CAPTURE DU SYSTEM PROMPT (DÉTECTÉ ET CORRIGÉ)
     function getSystemInstructions() {
         if (!expIncludeSystem) return '';
-        const panel = document.querySelector('ms-system-instructions-panel');
-        if (!panel) return '';
-        
-        // Cas A : Panneau d'édition ouvert
-        const textarea = panel.querySelector('textarea');
-        if (textarea) return textarea.value.trim();
-
-        // Cas B : Panneau d'édition fermé (Lecture directe de la prévisualisation Angular dans "subtitle")
-        const subtitleEl = panel.querySelector('.subtitle');
-        if (subtitleEl) {
-            const text = subtitleEl.textContent.trim();
-            const defaultPlaceholder = "Optional tone and style instructions for the model";
-            // On ignore le texte d'aide par défaut de Google si l'utilisateur n'a rien écrit
-            if (text && text.toLowerCase() !== defaultPlaceholder.toLowerCase()) {
-                return text;
-            }
+        const p = document.querySelector('ms-system-instructions-panel');
+        if (!p) return '';
+        const ta = p.querySelector('textarea');
+        if (ta) return ta.value.trim();
+        const sub = p.querySelector('.subtitle');
+        if (sub) {
+            const txt = sub.textContent.trim();
+            if (txt && txt.toLowerCase() !== 'optional tone and style instructions for the model') return txt;
         }
         return '';
     }
@@ -257,506 +746,673 @@
         if (!node) return '';
         if (node.nodeType === 3) return node.nodeValue;
         if (node.nodeType !== 1) return '';
-
-        const tagName = node.tagName.toLowerCase();
-        if (tagName === 'ms-thought-chunk') return '';
-        if (tagName === 'ms-code-block') {
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'ms-thought-chunk') return '';
+        if (tag === 'ms-code-block') {
             const lang = node.getAttribute('data-test-language') || '';
             const code = node.querySelector('pre code')?.textContent || '';
-            return '\n\n```' + lang + '\n' + code + '\n```\n\n';
+            return '\n\n' + FENCE + lang + '\n' + code + '\n' + FENCE + '\n\n';
         }
-
-        let childrenMarkdown = '';
-        node.childNodes.forEach(child => childrenMarkdown += htmlToMarkdown(child));
-
-        switch (tagName) {
-            case 'p': return '\n\n' + childrenMarkdown.trim() + '\n\n';
-            case 'strong': case 'b': return '**' + childrenMarkdown + '**';
-            case 'em': case 'i': return '*' + childrenMarkdown + '*';
-            case 'a':
-                let cleanHref = node.getAttribute('href') || '';
-                if (cleanHref.startsWith('https://www.google.com/url?sa=')) {
-                    try { cleanHref = new URL(cleanHref).searchParams.get('q') || cleanHref; } catch(e) {}
-                }
-                return '[' + childrenMarkdown + '](' + cleanHref + ')';
-            case 'ul': case 'ol': return '\n' + childrenMarkdown + '\n';
-            case 'li':
-                const listAncestor = node.closest('ul, ol');
-                if (listAncestor && listAncestor.tagName.toLowerCase() === 'ol') {
-                    const index = Array.from(listAncestor.querySelectorAll('li')).indexOf(node) + 1;
-                    return index + '. ' + childrenMarkdown.trim() + '\n';
-                }
-                return '* ' + childrenMarkdown.trim() + '\n';
-            case 'h1': return '\n\n# ' + childrenMarkdown.trim() + '\n\n';
-            case 'h2': return '\n\n## ' + childrenMarkdown.trim() + '\n\n';
-            case 'h3': return '\n\n### ' + childrenMarkdown.trim() + '\n\n';
-            case 'h4': case 'h5': case 'h6': return '\n\n#### ' + childrenMarkdown.trim() + '\n\n';
+        let ch = ''; node.childNodes.forEach(c => ch += htmlToMarkdown(c));
+        switch (tag) {
+            case 'p': return '\n\n' + ch.trim() + '\n\n';
+            case 'strong': case 'b': return '**' + ch + '**';
+            case 'em': case 'i': return '*' + ch + '*';
+            case 'a': return '[' + ch + '](' + (node.getAttribute('href') || '') + ')';
+            case 'ul': case 'ol': return '\n' + ch + '\n';
+            case 'li': return '* ' + ch.trim() + '\n';
+            case 'h1': return '\n\n# ' + ch.trim() + '\n\n';
+            case 'h2': return '\n\n## ' + ch.trim() + '\n\n';
+            case 'h3': return '\n\n### ' + ch.trim() + '\n\n';
             case 'br': return '\n';
-            default: return childrenMarkdown; 
+            default: return ch;
         }
     }
 
-    // Filtrage des Emojis avec protection absolue des blocs de code
     function stripEmojisSafe(text) {
         if (!text) return text;
-        const regex = /(```[\s\S]*?```|`[\s\S]*?`)|([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu;
-        
-        return text.replace(regex, (match, codeBlock, emoji) => {
-            if (codeBlock) return codeBlock;
-            if (emoji) return '';
-            return match;
-        });
+        const regex = new RegExp('(' + FENCE + '[\\s\\S]*?' + FENCE + '|`[\\s\\S]*?`)|([\\p{Emoji_Presentation}\\p{Extended_Pictographic}])', 'gu');
+        return text.replace(regex, (m, codeBlock, emoji) => codeBlock ? codeBlock : (emoji ? '' : m));
     }
 
-    // ==============================
-    // ⚙️ GÉNÉRATEUR FINAL (JSON ou MD)
-    // ==============================
     function generateExportFile(orderedIds) {
         let title = getConversationTitle();
         let systemInstructions = getSystemInstructions();
         const date = new Date().toISOString().split('T')[0];
-        
         if (expRemoveEmojis) {
             title = stripEmojisSafe(title);
             systemInstructions = stripEmojisSafe(systemInstructions);
         }
-        
-        let fileContent = "";
-        let fileExt = "";
-        let mimeType = "";
-
+        let fileContent = '', fileExt = '', mimeType = '';
         if (expFormat === 'json') {
-            const jsonOutput = {
-                title: title,
-                date: date,
-                system_instructions: systemInstructions || undefined,
-                history: []
-            };
-
-            orderedIds.forEach(turnId => {
-                const data = exportedTurns.get(turnId);
-                if (data && (data.markdown || (expIncludeThoughts && data.thoughts))) {
-                    const messageObj = { role: data.role.toLowerCase() };
-                    
-                    let thoughts = data.thoughts;
-                    let content = data.markdown;
-                    
-                    if (expRemoveEmojis) {
-                        thoughts = stripEmojisSafe(thoughts);
-                        content = stripEmojisSafe(content);
-                    }
-
-                    if (expIncludeThoughts && thoughts) messageObj.thoughts = thoughts;
-                    if (content) messageObj.content = content;
-                    
-                    jsonOutput.history.push(messageObj);
+            const jsonOutput = { title, date, system_instructions: systemInstructions || undefined, history: [] };
+            orderedIds.forEach(id => {
+                const d = exportedTurns.get(id);
+                if (d && (d.markdown || (expIncludeThoughts && d.thoughts))) {
+                    const obj = { role: d.role.toLowerCase() };
+                    let th = d.thoughts, ct = d.markdown;
+                    if (expRemoveEmojis) { th = stripEmojisSafe(th); ct = stripEmojisSafe(ct); }
+                    if (expIncludeThoughts && th) obj.thoughts = th;
+                    if (ct) obj.content = ct;
+                    jsonOutput.history.push(obj);
                 }
             });
-
             fileContent = JSON.stringify(jsonOutput, null, 2);
-            fileExt = "json";
-            mimeType = "application/json";
-
+            fileExt = 'json'; mimeType = 'application/json';
         } else {
             fileContent = '---\nTitle: ' + title + '\nDate: ' + date + '\n';
-            if (systemInstructions) {
-                fileContent += 'System Instructions: |\n  ' + systemInstructions.replace(/\n/g, '\n  ') + '\n';
-            }
+            if (systemInstructions) fileContent += 'System Instructions: |\n  ' + systemInstructions.replace(/\n/g, '\n  ') + '\n';
             fileContent += '---\n\n# Conversation History\n\n';
-
-            const iconUser = expRemoveEmojis ? "" : "👤 ";
-            const iconBot = expRemoveEmojis ? "" : "🤖 ";
+            const iconUser = expRemoveEmojis ? '' : '👤 ';
+            const iconBot = expRemoveEmojis ? '' : '🤖 ';
             const iconThought = expRemoveEmojis ? "Gemini's Thoughts" : "💭 Gemini's Thoughts";
-
-            orderedIds.forEach(turnId => {
-                const data = exportedTurns.get(turnId);
-                if (data) {
-                    let text = data.markdown;
-                    let thoughts = data.thoughts;
-
-                    if (expRemoveEmojis) {
-                        text = stripEmojisSafe(text);
-                        thoughts = stripEmojisSafe(thoughts);
+            orderedIds.forEach(id => {
+                const d = exportedTurns.get(id);
+                if (d) {
+                    let txt = d.markdown, th = d.thoughts;
+                    if (expRemoveEmojis) { txt = stripEmojisSafe(txt); th = stripEmojisSafe(th); }
+                    if (expIncludeThoughts && th) {
+                        txt = '<details>\n<summary>' + iconThought + '</summary>\n\n' + th + '\n\n</details>\n\n' + txt;
                     }
-
-                    if (expIncludeThoughts && thoughts) {
-                        const formattedThoughts = '<details>\n<summary>' + iconThought + '</summary>\n\n' + thoughts + '\n\n</details>';
-                        text = formattedThoughts + '\n\n' + text;
-                    }
-
-                    if (text) {
-                        if (data.role === 'User') fileContent += '### ' + iconUser + 'User\n' + text + '\n\n';
-                        else if (data.role === 'Gemini') fileContent += '### ' + iconBot + 'Gemini\n' + text + '\n\n';
-                        else fileContent += text + '\n\n';
+                    if (txt) {
+                        if (d.role === 'User') fileContent += '### ' + iconUser + 'User\n' + txt + '\n\n';
+                        else if (d.role === 'Gemini') fileContent += '### ' + iconBot + 'Gemini\n' + txt + '\n\n';
+                        else fileContent += txt + '\n\n';
                     }
                 }
             });
-
-            fileExt = "md";
-            mimeType = "text/markdown";
+            fileExt = 'md'; mimeType = 'text/markdown';
         }
-
         const blob = new Blob([fileContent], { type: mimeType + ';charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const timestamp = new Date().toISOString().replace(/T/, '_').replace(/:/g, '').substring(0, 15);
-
-        a.href = url;
-        a.download = safeTitle + '_' + timestamp + '.' + fileExt;
-        document.body.appendChild(a);
-        a.click();
-        
-        document.body.removeChild(a);
+        a.href = url; a.download = safeTitle + '_' + timestamp + '.' + fileExt;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
 
-    // ==============================
-    // 🔍 SCANNER HAUTE VITESSE 
-    // ==============================
     async function performAutoScrollExport() {
         const btn = document.getElementById('modal-start-export-btn');
         if (!btn) return;
-        
-        const originalText = btn.innerText;
-        btn.disabled = true;
-
+        const origTxt = btn.innerText; btn.disabled = true;
         try {
-            let scrollEl = document.documentElement;
-            const chatTurn = document.querySelector('ms-chat-turn');
-            if (chatTurn) {
-                let parent = chatTurn.parentElement;
-                while (parent && parent !== document.body) {
-                    const style = window.getComputedStyle(parent);
-                    if (style.overflowY === 'auto' || style.overflowY === 'scroll') { scrollEl = parent; break; }
-                    parent = parent.parentElement;
-                }
-            }
-
-            const wasEnabled = enabled;
-            const originalScrollPos = scrollEl.scrollTop;
-
-            enabled = false;
-            restoreFullDOM();
-            
-            btn.innerText = '⏳ Initializing...';
-            
+            const scrollEl = findScrollableChatContainer();
+            const wasEnabled = enabled, origScroll = scrollEl.scrollTop;
+            enabled = false; restoreFullDOM();
+            btn.innerText = '⏳ Подготовка истории...';
             let lastUp = -1;
-            while(scrollEl.scrollTop > 0 && scrollEl.scrollTop !== lastUp) {
-                lastUp = scrollEl.scrollTop;
-                scrollEl.scrollTop -= 2000;
-                await new Promise(r => setTimeout(r, 50)); 
+            while (scrollEl.scrollTop > 0 && scrollEl.scrollTop !== lastUp) {
+                lastUp = scrollEl.scrollTop; scrollEl.scrollTop -= 2500;
+                await new Promise(r => nativeSetTimeout(r, 50));
             }
             scrollEl.scrollTop = 0;
-            
-            await new Promise(r => setTimeout(r, 500)); 
+            await new Promise(r => nativeSetTimeout(r, 400));
 
-            const perfectChronologicalIds = [];
-            let maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
-            let lastScroll = -1;
-            let dots = 0;
-            
-            const scrollStep = Math.max(500, scrollEl.clientHeight * 0.85);
-            
+            const orderedIds = [];
+            let maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight, lastScroll = -1, dots = 0;
+            const step = Math.max(500, scrollEl.clientHeight * 0.85);
             while (scrollEl.scrollTop <= maxScroll) {
-                
                 collapseAll();
-
                 maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
-                
                 dots = (dots + 1) % 4;
-                btn.innerText = '⏳ Scanning' + '.'.repeat(dots);
-
-                const currentTurns = document.querySelectorAll('ms-chat-turn');
-                currentTurns.forEach(turn => {
-                    const turnId = turn.id;
-                    if (!turnId) return;
-
-                    if (!perfectChronologicalIds.includes(turnId)) {
-                        perfectChronologicalIds.push(turnId);
-                    }
-
-                    const contentRoot = turn.querySelector('ms-prompt-chunk, .text-chunk, ms-text-chunk');
-                    if (!contentRoot) return; 
-
-                    const rawText = contentRoot.textContent;
-                    if (!rawText || !rawText.trim()) return; 
-
-                    let role = 'Unknown';
-                    if (turn.querySelector('[data-turn-role="User"], .user, .user-prompt-container')) role = 'User';
-                    else if (turn.querySelector('[data-turn-role="Model"], .model, .model-prompt-container')) role = 'Gemini';
-
-                    const signature = rawText.length + '-' + role;
-                    const existing = exportedTurns.get(turnId);
-                    if (existing && existing.signature === signature) return; 
-
-                    let thoughtsText = '';
-                    const thoughtNode = turn.querySelector('ms-thought-chunk');
-                    if (thoughtNode) {
-                        const body = thoughtNode.querySelector('.mat-expansion-panel-body, ms-text-chunk');
-                        if (body) thoughtsText = htmlToMarkdown(body).replace(/\n{3,}/g, '\n\n').trim();
-                    }
-
-                    let text = htmlToMarkdown(contentRoot).replace(/\n{3,}/g, '\n\n').trim();
-                    if (!text && !thoughtsText) return;
-
-                    exportedTurns.set(turnId, { role, thoughts: thoughtsText, markdown: text, signature });
+                btn.innerText = '⏳ Сканирование чата' + '.'.repeat(dots);
+                document.querySelectorAll('ms-chat-turn').forEach(turn => {
+                    if (!turn.id) return;
+                    if (!orderedIds.includes(turn.id)) orderedIds.push(turn.id);
+                    captureSingleTurn(turn);
                 });
-
                 if (scrollEl.scrollTop === lastScroll && scrollEl.scrollTop > 0) {
-                    await new Promise(r => setTimeout(r, 300)); 
+                    await new Promise(r => nativeSetTimeout(r, 300));
                     maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
                     if (scrollEl.scrollTop >= maxScroll) break;
                 }
-
-                lastScroll = scrollEl.scrollTop;
-                scrollEl.scrollTop += scrollStep; 
-                await new Promise(r => setTimeout(r, 150)); 
+                lastScroll = scrollEl.scrollTop; scrollEl.scrollTop += step;
+                await new Promise(r => nativeSetTimeout(r, 140));
             }
-
-            generateExportFile(perfectChronologicalIds);
-
-            scrollEl.scrollTop = originalScrollPos;
-            if (wasEnabled) {
-                enabled = true;
-                optimizeDOM();
-            }
-            
-            closeExportModal();
-
+            generateExportFile(orderedIds);
+            scrollEl.scrollTop = origScroll;
+            if (wasEnabled) { enabled = true; MAX_VISIBLE = BASE_MAX_VISIBLE; optimizeDOM(); }
+            exportModalOverlay.style.display = 'none';
         } catch (e) {
-            console.error("[Optimizer] Scan Error:", e);
-            alert("Erreur lors de l'analyse de la conversation.");
+            alert('Ошибка при экспорте чата.');
         } finally {
-            btn.innerText = originalText;
-            btn.disabled = false;
+            btn.innerText = origTxt; btn.disabled = false;
         }
     }
 
-    // ==============================
-    // 👀 OBSERVERS & COLLAPSE
-    // ==============================
-
-    const observer = new MutationObserver((mutations) => {
-        let shouldOptimize = false;
-        let shouldCapture = false;
-        for (let m of mutations) {
-            if (m.addedNodes.length > 0 || m.type === 'characterData' || m.type === 'childList') { 
-                shouldCapture = true;
-                if (m.addedNodes.length > 0) shouldOptimize = true;
+    function findScrollableChatContainer() {
+        const ct = document.querySelector('ms-chat-turn');
+        if (ct) {
+            let p = ct.parentElement;
+            while (p && p !== document.body) {
+                const st = window.getComputedStyle(p);
+                if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+                p = p.parentElement;
             }
         }
-        if (shouldCapture) debouncedCapture();
-        if (shouldOptimize) debouncedOptimizeDOM();
-    });
+        return document.querySelector('ms-autoscroll-container') || document.documentElement;
+    }
 
-    observer.observe(document.body, { childList: true, subtree: true });
-    
-    setTimeout(() => { updateCollectedTurns(); optimizeDOM(); }, 2000);
+    function buildInstantAiReportObject() {
+        const vis = getMessages();
+        return {
+            report_version: '6.0.0-fork-release',
+            timestamp: new Date().toISOString(),
+            session_scale: {
+                turns_total_known: vis.length + detachedMessages.length,
+                turns_rendered_visible: vis.filter(t => t.style.display !== 'none').length,
+                dom_total_nodes: document.getElementsByTagName('*').length,
+                dom_code_blocks: document.querySelectorAll('ms-code-block').length
+            },
+            live_snapshot: {
+                event_loop_lag_ms: diag.eventLoopLagMs, cpu_busy_est_pct: diag.cpuBusyPercentEst,
+                long_tasks_total_count: diag.longTasksCount, long_tasks_total_ms: diag.longTaskTotalMs,
+                mutations_per_sec: diag.mutationsPerSec, buffered_chunks_suppressed_total: diag.bufferedChunksSuppressed,
+                userscript_self_time_ms_per_sec: diag.scriptSelfTimeMs
+            },
+            benchmark_runs_history: diag.benchmarkHistory
+        };
+    }
 
-    let autoMode = true;
+    function setNativeTextareaValue(ta, text) {
+        if (!ta) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        if (setter) setter.call(ta, text); else ta.value = text;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    async function sendTextToAiChat(msg) {
+        const ta = document.querySelector('footer textarea, ms-prompt-box textarea, textarea');
+        if (!ta) return false;
+        let w = 0; while (checkIsModelStreaming() && w < 30) { await new Promise(r => nativeSetTimeout(r, 500)); w++; }
+        setNativeTextareaValue(ta, msg);
+        await new Promise(r => nativeSetTimeout(r, 250));
+        const btn = document.querySelector('button.run-button, ms-run-button button, button[aria-label*="Run"]');
+        if (btn && !btn.disabled) btn.click();
+        else ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ctrlKey: true, bubbles: true }));
+        return true;
+    }
+
+    async function runDeterministicGenerationBenchmark(btnEl, autoSendAfter = true) {
+        const origText = btnEl ? btnEl.innerText : '';
+        if (btnEl) btnEl.disabled = true;
+        try {
+            const prompt = "BENCHMARK_STREAM_TEST: Reply with exact deterministic structure and NO extra commentary:\n1) Numbers from 1 to 50 separated by commas.\n2) A Markdown table with 5 columns (ID, Name, MetricA, MetricB, Status) and 12 rows.\n3) A JavaScript code block containing exactly 50 short one-line functions named fn1() through fn50().";
+            const turnsBefore = getMessages().length;
+            await sendTextToAiChat(prompt);
+            const startT = performance.now(), sLtCnt = diag.longTasksCount, sLtMs = diag.longTaskTotalMs, sMut = diag._mutationCount, sBuf = diag.bufferedChunksSuppressed;
+            const deltas = [], buckets = [];
+            let bFrames = [], bStart = startT, lastT = startT, firstTok = null, started = false, done = false;
+
+            await new Promise((resolve) => {
+                function loop(now) {
+                    if (done) { resolve(); return; }
+                    const dt = now - lastT; lastT = now; deltas.push(dt); bFrames.push(dt);
+                    const gen = checkIsModelStreaming();
+                    if ((gen || getMessages().length > turnsBefore) && !started) { started = true; firstTok = now; }
+                    if (now - bStart >= 1000) {
+                        const sec = Math.round((now - startT) / 1000);
+                        buckets.push({ sec, fps: bFrames.length, max_frame_ms: Math.round(Math.max(...bFrames)) });
+                        if (btnEl) btnEl.innerText = `⏳ Тест идёт (${sec}с | ${bFrames.length} FPS)...`;
+                        bFrames = []; bStart = now;
+                    }
+                    if ((started && (now - firstTok > 2000) && !gen) || (now - startT > 65000)) { done = true; resolve(); return; }
+                    nativeRAF(loop);
+                }
+                nativeRAF(t => { lastT = t; bStart = t; nativeRAF(loop); });
+            });
+            await new Promise(r => nativeSetTimeout(r, 700));
+            const totalMs = Math.round(performance.now() - startT);
+            const clean = deltas.slice(1), avg = clean.reduce((a, b) => a + b, 0) / (clean.length || 1);
+            diag.benchmarkHistory.push({
+                run_id: diag.benchmarkHistory.length + 1, run_type: 'DETERMINISTIC_STREAM_V600',
+                total_wall_time_ms: totalMs,
+                avg_fps_during_stream: Math.round((clean.length / (totalMs / 1000)) * 10) / 10,
+                avg_frame_ms: Math.round(avg * 10) / 10,
+                long_tasks_count_delta: diag.longTasksCount - sLtCnt, long_tasks_total_ms_delta: diag.longTaskTotalMs - sLtMs,
+                cpu_thread_blocked_pct: Math.round(((diag.longTaskTotalMs - sLtMs) / totalMs) * 1000) / 10,
+                dom_mutations_delta: diag._mutationCount - sMut,
+                network_chunks_buffered_delta: diag.bufferedChunksSuppressed - sBuf,
+                per_second_timeline: buckets
+            });
+            const md = FENCE + 'json\n' + JSON.stringify(buildInstantAiReportObject(), null, 2) + '\n' + FENCE;
+            await safeClipboardWrite(md);
+            if (autoSendAfter) {
+                await new Promise(r => nativeSetTimeout(r, 1200));
+                await sendTextToAiChat("🤖 **[AUTO-TELEMETRY REPORT v6.0.0]**\n\n" + md);
+            }
+            if (btnEl) {
+                btnEl.innerText = '✅ Замер отправлен!';
+                nativeSetTimeout(() => { btnEl.innerText = origText; btnEl.disabled = false; }, 3000);
+            }
+        } catch (e) { if (btnEl) { btnEl.innerText = origText; btnEl.disabled = false; } }
+    }
+
     function collapseAll() {
-        const openBtns = document.querySelectorAll('ms-code-block button[data-test-id="expand-icon-button"] span');
-        let c = 0;
-        openBtns.forEach(span => {
-            if (span.textContent.trim() === 'expand_less') {
-                const b = span.closest('button');
-                if (b) { b.click(); c++; }
-            }
+        let count = 0;
+        document.querySelectorAll('ms-code-block button[data-test-id="expand-icon-button"] span').forEach(s => {
+            if (s.textContent.trim() === 'expand_less') { s.closest('button')?.click(); count++; }
         });
-        return c;
-    }
-    function stopAutoMode() { autoMode = false; collapseObserver.disconnect(); }
-
-    const collapseObserver = new MutationObserver(() => {
-        if (!autoMode) return;
-        if (collapseAll() === 0) stopAutoMode();
-    });
-    collapseObserver.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => { if (collapseAll() === 0) stopAutoMode(); }, 1200);
-
-    // ==============================
-    // 🎨 UI & MODALS
-    // ==============================
-
-    const btnContainer = document.createElement('div');
-    Object.assign(btnContainer.style, {
-        position: 'fixed', bottom: '25px', left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', gap: '12px', zIndex: 99999
-    });
-
-    const baseBtnStyle = {
-        padding: '10px 18px', background: '#333', color: '#fff', border: 'none', borderRadius: '8px',
-        cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', fontSize: '15px',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s, transform 0.1s'
-    };
-
-    const collapseBtn = document.createElement('button');
-    collapseBtn.innerText = '▼'; collapseBtn.title = "Fermer les codes";
-    Object.assign(collapseBtn.style, baseBtnStyle);
-    collapseBtn.onclick = () => { autoMode = false; collapseAll(); };
-
-    const optimizerBtn = document.createElement('button');
-    // ✅ CORRECTIF DE L'ÉCHAPPEMENT UNICODE : UN SEUL ANTI-SLASH SÉCURISÉ
-    optimizerBtn.innerText = '\u00A0🚀\u00A0';
-    Object.assign(optimizerBtn.style, baseBtnStyle);
-
-    [collapseBtn, optimizerBtn].forEach(btn => {
-        btn.onmouseover = () => btn.style.background = '#444';
-        btn.onmouseout = () => btn.style.background = '#333';
-        btn.onmousedown = () => btn.style.transform = 'scale(0.95)';
-        btn.onmouseup = () => btn.style.transform = 'scale(1)';
-    });
-
-    btnContainer.appendChild(collapseBtn);
-    btnContainer.appendChild(optimizerBtn);
-
-    // MAIN PANEL
-    const panel = document.createElement('div');
-    Object.assign(panel.style, {
-        position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999,
-        background: '#2b2b2b', padding: '16px', borderRadius: '12px', color: '#fff', fontSize: '13px',
-        display: 'none', flexDirection: 'column', gap: '10px', minWidth: '240px', boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
-    });
-
-    function createRow(text, el) {
-        const r = document.createElement('div'); r.style.display = 'flex'; r.style.justifyContent = 'space-between'; r.style.alignItems = 'center';
-        const l = document.createElement('span'); l.innerText = text; r.appendChild(l); r.appendChild(el); return r;
+        return count;
     }
 
-    const inputStyle = { width: '60px', padding: '4px', borderRadius: '4px', border: '1px solid #555', background: '#1e1e1e', color: '#fff', textAlign: 'center' };
+    let topPillContainer, headerMainBtn, headerDiagBtn, diagDot, bottomCollapseBtn, panel, diagModal, exportModalOverlay, restoreBtn;
 
-    const maxInput = document.createElement('input'); maxInput.type = 'number'; maxInput.value = BASE_MAX_VISIBLE; Object.assign(maxInput.style, inputStyle);
-    maxInput.onchange = () => { BASE_MAX_VISIBLE = parseInt(maxInput.value) || 35; MAX_VISIBLE = BASE_MAX_VISIBLE; saveConfig(); debouncedOptimizeDOM(); };
+    function initUi() {
+        topPillContainer = document.createElement('div');
+        Object.assign(topPillContainer.style, {
+            position: 'fixed', top: '10px', right: '190px', display: 'flex', alignItems: 'center',
+            gap: '6px', zIndex: 99999, background: '#1e1f22', padding: '4px 8px', borderRadius: '20px',
+            border: '1px solid #3c4043', boxShadow: '0 2px 8px rgba(0,0,0,0.35)', cursor: 'grab', userSelect: 'none'
+        });
 
-    const restoreInput = document.createElement('input'); restoreInput.type = 'number'; restoreInput.value = RESTORE_COUNT; Object.assign(restoreInput.style, inputStyle);
-    restoreInput.onchange = () => { RESTORE_COUNT = parseInt(restoreInput.value) || 10; saveConfig(); };
+        const dragGrip = document.createElement('span');
+        dragGrip.innerText = '⋮⋮';
+        Object.assign(dragGrip.style, { color: '#777', fontSize: '12px', padding: '0 2px', cursor: 'grab' });
+        attachTooltip(dragGrip, 'Перетаскиваемая панель', 'Зажмите левую кнопку мыши и перетащите панель в любое удобное место. Позиция сохранится автоматически.');
 
-    const cacheInput = document.createElement('input'); cacheInput.type = 'number'; cacheInput.value = MAX_CACHE; Object.assign(cacheInput.style, inputStyle);
-    cacheInput.onchange = () => { MAX_CACHE = parseInt(cacheInput.value) || 50; saveConfig(); debouncedOptimizeDOM(); };
+        const pillBtnStyle = {
+            padding: '5px 11px', background: '#2b2d31', color: '#e8eaed', border: 'none',
+            borderRadius: '14px', cursor: 'pointer', fontSize: '12px', fontWeight: '500',
+            display: 'flex', alignItems: 'center', gap: '6px'
+        };
 
-    function makeBtn(txt, act, color = '#3c3c3c') {
-        const b = document.createElement('button'); b.innerText = txt;
-        Object.assign(b.style, { background: color, color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', width: '100%', marginTop: '4px', fontWeight: 'bold' });
-        b.onclick = act;
-        b.onmouseover = () => b.style.opacity = '0.8';
-        b.onmouseout = () => b.style.opacity = '1';
-        return b;
+        headerMainBtn = document.createElement('button');
+        headerMainBtn.innerText = '⚡ Чат';
+        Object.assign(headerMainBtn.style, pillBtnStyle);
+        attachTooltip(
+            headerMainBtn,
+            'Управление памятью чата и Экспорт',
+            'Показывает, сколько последних сообщений сейчас открыто на экране, а сколько старых сообщений временно скрыто в архиве. Нажмите для настройки или экспорта чата в файл.'
+        );
+
+        headerDiagBtn = document.createElement('button');
+        diagDot = document.createElement('span');
+        Object.assign(diagDot.style, { width: '8px', height: '8px', borderRadius: '50%', background: '#00e676', display: 'inline-block' });
+        const diagLbl = document.createElement('span');
+        diagLbl.innerText = '🩺 0%';
+        headerDiagBtn.appendChild(diagDot);
+        headerDiagBtn.appendChild(diagLbl);
+        Object.assign(headerDiagBtn.style, pillBtnStyle);
+        attachTooltip(
+            headerDiagBtn,
+            'Монитор нагрузки и Ускоритель стрима',
+            'Показывает текущую загрузку потока браузера в процентах (0% — вкладка работает идеально легко). Нажмите, чтобы открыть настройки буферизации ответов и диагностику.'
+        );
+
+        topPillContainer.appendChild(dragGrip);
+        topPillContainer.appendChild(headerMainBtn);
+        topPillContainer.appendChild(headerDiagBtn);
+
+        makeElementDraggable(topPillContainer, posTopPill, (newPos) => { posTopPill = newPos; saveConfig(); });
+
+        bottomCollapseBtn = document.createElement('button');
+        bottomCollapseBtn.innerText = '⋮⋮ ▼ Свернуть код';
+        Object.assign(bottomCollapseBtn.style, {
+            position: 'fixed', bottom: '22px', right: '42px',
+            padding: '8px 14px', background: '#25262b', color: '#e8eaed',
+            border: '1px solid #4a5568', borderRadius: '18px', cursor: 'grab',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.5)', fontSize: '12px', fontWeight: 'bold',
+            zIndex: 99997, userSelect: 'none'
+        });
+        attachTooltip(
+            bottomCollapseBtn,
+            'Свернуть длинные блоки кода (перетаскивается мышкой!)',
+            'Нажмите, чтобы одним кликом свернуть все открытые простыни кода в чате. Зажмите кнопку мыши, чтобы перетащить кнопку в любое место.'
+        );
+        bottomCollapseBtn.onclick = () => {
+            const c = collapseAll();
+            bottomCollapseBtn.innerText = `⋮⋮ ▼ Свёрнуто: ${c}`;
+            nativeSetTimeout(() => { bottomCollapseBtn.innerText = '⋮⋮ ▼ Свернуть код'; }, 1200);
+        };
+
+        makeElementDraggable(bottomCollapseBtn, posBottomBtn, (newPos) => { posBottomBtn = newPos; saveConfig(); });
+
+        panel = document.createElement('div');
+        Object.assign(panel.style, {
+            position: 'fixed', top: '48px', right: '190px', zIndex: 99999,
+            background: '#25262b', padding: '16px', borderRadius: '12px', color: '#fff', fontSize: '12.5px',
+            display: 'none', flexDirection: 'column', gap: '9px', minWidth: '280px',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.75)', border: '1px solid #3c4043', fontFamily: 'sans-serif'
+        });
+
+        function makeBtn(txt, act, color = '#3c3c3c', tooltipTitle = '', tooltipBody = '') {
+            const b = document.createElement('button'); b.innerText = txt;
+            Object.assign(b.style, {
+                background: color, color: '#fff', border: 'none', padding: '8px 10px', borderRadius: '7px',
+                cursor: 'pointer', width: '100%', fontWeight: 'bold', fontSize: '12px', flexShrink: 0, textAlign: 'left'
+            });
+            b.onclick = act;
+            if (tooltipTitle) attachTooltip(b, tooltipTitle, tooltipBody);
+            return b;
+        }
+
+        const inputStyle = { width: '58px', padding: '4px', borderRadius: '4px', border: '1px solid #555', background: '#161618', color: '#fff', textAlign: 'center' };
+
+        function createSettingRow(labelTxt, inputEl, ttTitle, ttBody) {
+            const r = document.createElement('div');
+            Object.assign(r.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' });
+            const s = document.createElement('span'); s.innerText = labelTxt;
+            r.appendChild(s); r.appendChild(inputEl);
+            if (ttTitle) attachTooltip(r, ttTitle, ttBody);
+            return r;
+        }
+
+        const maxInput = document.createElement('input'); maxInput.type = 'number'; maxInput.value = BASE_MAX_VISIBLE; Object.assign(maxInput.style, inputStyle);
+        maxInput.onchange = () => { BASE_MAX_VISIBLE = parseInt(maxInput.value) || 15; MAX_VISIBLE = BASE_MAX_VISIBLE; saveConfig(); optimizeDOM(); };
+
+        const restoreInput = document.createElement('input'); restoreInput.type = 'number'; restoreInput.value = RESTORE_COUNT; Object.assign(restoreInput.style, inputStyle);
+        restoreInput.onchange = () => { RESTORE_COUNT = parseInt(restoreInput.value) || 10; saveConfig(); updateUiCounters(); };
+
+        panel.appendChild(createSettingRow(
+            'Оставлять сообщений на экране:', maxInput,
+            'Лимит видимых сообщений в чате',
+            'Когда беседа становится длинной, старые сообщения сверху временно прячутся в архив, чтобы страница не тормозила при наборе текста и скролле. Рекомендуется: 15–25.'
+        ));
+        panel.appendChild(createSettingRow(
+            'Подгружать за один клик по:', restoreInput,
+            'Шаг возврата из архива',
+            'Сколько старых сообщений возвращать на экран при нажатии кнопки «Показать ещё».'
+        ));
+
+        const toggleOptBtn = makeBtn(
+            enabled ? '⚡ Авто-скрытие старых сообщений: ВКЛ' : '⛔ Авто-скрытие старых сообщений: ВЫКЛ',
+            () => {
+                enabled = !enabled;
+                toggleOptBtn.innerText = enabled ? '⚡ Авто-скрытие старых сообщений: ВКЛ' : '⛔ Авто-скрытие старых сообщений: ВЫКЛ';
+                toggleOptBtn.style.background = enabled ? '#2e7d32' : '#8b0000';
+                saveConfig();
+                if (enabled) optimizeDOM(); else restoreFullDOM();
+            },
+            enabled ? '#2e7d32' : '#8b0000',
+            'Главный выключатель очистки ленты чата',
+            'Если выключить, все сообщения диалога всегда будут оставаться на странице.'
+        );
+        panel.appendChild(toggleOptBtn);
+
+        restoreBtn = makeBtn('⬆ Показать ещё старые сообщения', restoreMessages, '#0277bd', 'Достать сообщения из архива', 'Возвращает предыдущие сообщения в верхнюю часть чата.');
+        panel.appendChild(restoreBtn);
+
+        panel.appendChild(makeBtn(
+            '⬇ Снова скрыть старые (оставить последние)',
+            () => { MAX_VISIBLE = BASE_MAX_VISIBLE; optimizeDOM(); },
+            '#e65100',
+            'Очистить экран до заданного лимита',
+            'Скрывает ранее развёрнутые старые сообщения обратно в архив.'
+        ));
+
+        const parkBtn = makeBtn(
+            smartScrollParkOnFinish ? '🎯 Ставить экран на начало ответа: ВКЛ' : '🎯 Ставить экран на начало ответа: ВЫКЛ',
+            () => {
+                smartScrollParkOnFinish = !smartScrollParkOnFinish;
+                parkBtn.innerText = smartScrollParkOnFinish ? '🎯 Ставить экран на начало ответа: ВКЛ' : '🎯 Ставить экран на начало ответа: ВЫКЛ';
+                parkBtn.style.background = smartScrollParkOnFinish ? '#00695c' : '#555';
+                saveConfig();
+            },
+            smartScrollParkOnFinish ? '#00695c' : '#555',
+            'Умная парковка экрана после ответа ИИ',
+            'Ставит экран ровно на ПЕРВУЮ строчку нового ответа ИИ после завершения генерации, чтобы вы сразу читали его сверху вниз.'
+        );
+        panel.appendChild(parkBtn);
+
+        const divider = document.createElement('hr');
+        divider.style.borderColor = '#444'; divider.style.margin = '4px 0';
+        panel.appendChild(divider);
+
+        const openExportModalBtn = makeBtn(
+            '📥 Экспорт всей беседы в файл (.MD / .JSON)...',
+            () => { panel.style.display = 'none'; exportModalOverlay.style.display = 'flex'; },
+            '#6a1b9a',
+            'Сохранить весь диалог на компьютер',
+            'Открывает окно скачивания всей истории переписки (включая скрытые сообщения, системный промпт и мысли модели) в формате Markdown или JSON.'
+        );
+        panel.appendChild(openExportModalBtn);
+
+        exportModalOverlay = document.createElement('div');
+        Object.assign(exportModalOverlay.style, {
+            position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+            background: 'rgba(0,0,0,0.65)', zIndex: 100002, display: 'none',
+            alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif'
+        });
+
+        const exportModal = document.createElement('div');
+        Object.assign(exportModal.style, {
+            background: '#25262b', padding: '22px', borderRadius: '14px', color: '#fff', fontSize: '13.5px',
+            display: 'flex', flexDirection: 'column', gap: '12px', minWidth: '380px',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.85)', border: '1px solid #444'
+        });
+
+        const expTitle = document.createElement('h3');
+        expTitle.innerText = '📥 Экспорт истории диалога';
+        expTitle.style.margin = '0 0 6px 0';
+        exportModal.appendChild(expTitle);
+
+        const formatSelect = document.createElement('select');
+        Object.assign(formatSelect.style, inputStyle, { width: '150px', cursor: 'pointer' });
+        [['md', 'Markdown (.md)'], ['json', 'JSON (.json)']].forEach(([val, txt]) => {
+            const opt = document.createElement('option');
+            opt.value = val; opt.innerText = txt;
+            if (val === expFormat) opt.selected = true;
+            formatSelect.appendChild(opt);
+        });
+        formatSelect.onchange = () => { expFormat = formatSelect.value; saveConfig(); };
+        exportModal.appendChild(createSettingRow('Формат файла:', formatSelect, '', ''));
+
+        function createExpCheckbox(labelTxt, initVal, onChange) {
+            const lbl = document.createElement('label');
+            Object.assign(lbl.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '3px 0' });
+            const sp = document.createElement('span'); sp.innerText = labelTxt;
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = initVal;
+            cb.style.width = '16px'; cb.style.height = '16px'; cb.style.accentColor = '#00c853';
+            cb.onchange = (e) => onChange(e.target.checked);
+            lbl.appendChild(sp); lbl.appendChild(cb);
+            return lbl;
+        }
+
+        exportModal.appendChild(createExpCheckbox('Включить блоки размышлений (Thinking)', expIncludeThoughts, v => { expIncludeThoughts = v; saveConfig(); }));
+        exportModal.appendChild(createExpCheckbox('Включить системную инструкцию (System Prompt)', expIncludeSystem, v => { expIncludeSystem = v; saveConfig(); }));
+        exportModal.appendChild(createExpCheckbox('Удалить эмодзи из текста', expRemoveEmojis, v => { expRemoveEmojis = v; saveConfig(); }));
+
+        const expBtnsRow = document.createElement('div');
+        Object.assign(expBtnsRow.style, { display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: '10px', marginTop: '8px' });
+        const expCancelBtn = makeBtn('Отмена', () => { exportModalOverlay.style.display = 'none'; }, '#555');
+        expCancelBtn.style.textAlign = 'center';
+        const expStartBtn = makeBtn('🚀 Сканировать и скачать', performAutoScrollExport, '#2e7d32');
+        expStartBtn.id = 'modal-start-export-btn';
+        expStartBtn.style.textAlign = 'center';
+        expBtnsRow.appendChild(expCancelBtn);
+        expBtnsRow.appendChild(expStartBtn);
+        exportModal.appendChild(expBtnsRow);
+        exportModalOverlay.appendChild(exportModal);
+
+        diagModal = document.createElement('div');
+        Object.assign(diagModal.style, {
+            position: 'fixed', top: '48px', right: '40px', zIndex: 99999,
+            background: '#1e1e24', padding: '18px', borderRadius: '14px', color: '#e0e0e0', fontSize: '12.5px',
+            display: 'none', flexDirection: 'column', gap: '12px', width: '540px', maxWidth: '95vw',
+            maxHeight: '84vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.85)',
+            border: '1px solid #3a3a48', fontFamily: 'sans-serif'
+        });
+
+        const diagHdr = document.createElement('div');
+        Object.assign(diagHdr.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '8px' });
+        const diagTitle = document.createElement('strong');
+        diagTitle.style.fontSize = '14px';
+        diagTitle.innerText = '🩺 Ускоритель работы и Монитор ресурсов';
+        const diagClose = document.createElement('button');
+        diagClose.innerText = '✕';
+        Object.assign(diagClose.style, { background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px' });
+        diagClose.onclick = () => { diagModal.style.display = 'none'; };
+        diagHdr.appendChild(diagTitle); diagHdr.appendChild(diagClose);
+        diagModal.appendChild(diagHdr);
+
+        const togglesBox = document.createElement('div');
+        Object.assign(togglesBox.style, { display: 'flex', flexDirection: 'column', gap: '8px', background: '#262630', padding: '12px', borderRadius: '10px' });
+
+        function createHumanToggle(title, subtitle, initVal, onChange) {
+            const row = document.createElement('label');
+            Object.assign(row.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', cursor: 'pointer', paddingBottom: '6px', borderBottom: '1px solid #343442' });
+            const left = document.createElement('div');
+            const t = document.createElement('div'); t.style.fontWeight = 'bold'; t.style.color = '#fff'; t.innerText = title;
+            const s = document.createElement('div'); s.style.fontSize = '11px'; s.style.color = '#aaa'; s.style.marginTop = '2px'; s.innerText = subtitle;
+            left.appendChild(t); left.appendChild(s);
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = initVal;
+            Object.assign(cb.style, { width: '18px', height: '18px', accentColor: '#00e676', cursor: 'pointer', flexShrink: 0 });
+            cb.onchange = (e) => onChange(e.target.checked);
+            row.appendChild(left); row.appendChild(cb);
+            togglesBox.appendChild(row);
+        }
+
+        createHumanToggle(
+            '📦 Буферизация потокового ответа ИИ (Защита от тормозов при генерации)',
+            'Когда ИИ пишет длинный ответ, скрипт сначала показывает блок мыслей (Thinking), а сам текст ответа копит в фоновом буфере и выдаёт готовым за 1 раз, снижая нагрузку на процессор в 15 раз.',
+            hypVirtualStreamBuffer,
+            v => { hypVirtualStreamBuffer = v; saveConfig(); applyHypothesisStyles(); }
+        );
+
+        createHumanToggle(
+            '🛡️ Отключить холостые анимации и размытие фона (Экономия видеокарты и батареи)',
+            'Убирает бесконечные фоновые перерисовки спиннеров, эквалайзера микрофона и полупрозрачное размытие панелей при прокрутке.',
+            hypKillInfiniteAnim && hypKillBackdropBlur && hypKillMicCanvas,
+            v => { hypKillInfiniteAnim = v; hypKillBackdropBlur = v; hypKillMicCanvas = v; saveConfig(); applyHypothesisStyles(); }
+        );
+
+        createHumanToggle(
+            '🛠️ Автоматически чинить сорванную разметку длинных блоков кода',
+            'Если Google AI Studio на огромном куске кода (>1000 строк) сбился и вывел его простым текстом, скрипт сам оформит его в аккуратное окно с кнопкой копирования.',
+            hypAutoRepairMarkdown,
+            v => { hypAutoRepairMarkdown = v; saveConfig(); if (v) repairUnparsedCodeBlocks(); }
+        );
+
+        diagModal.appendChild(togglesBox);
+
+        const statusBox = document.createElement('div');
+        Object.assign(statusBox.style, {
+            background: '#141418', padding: '12px', borderRadius: '8px', border: '1px solid #2d2d38',
+            whiteSpace: 'pre-wrap', lineHeight: '1.5', fontFamily: 'monospace', fontSize: '11.5px'
+        });
+        attachTooltip(
+            statusBox,
+            'Живая телеметрия вкладки',
+            '• Задержка отклика (Lag): 0–15 мс означает идеально плавный интерфейс.\n• Занятость потока: какую долю секунды процессор тратит на тяжёлые задачи страницы.\n• Сэкономлено рендеров: сколько раз буфер спас страницу от лишнего пересчёта во время ответа ИИ.'
+        );
+        diagModal.appendChild(statusBox);
+
+        const devSpoiler = document.createElement('details');
+        Object.assign(devSpoiler.style, { background: '#181820', padding: '8px 12px', borderRadius: '8px', border: '1px solid #2e3440' });
+        const devSum = document.createElement('summary');
+        devSum.style.cursor = 'pointer'; devSum.style.color = '#80cbc4'; devSum.style.fontSize = '11.5px';
+        devSum.innerText = '🔬 Инструменты разработчика (Авто-тест скорости и отправка телеметрии ИИ)';
+        devSpoiler.appendChild(devSum);
+
+        const devBtns = document.createElement('div');
+        Object.assign(devBtns.style, { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' });
+        const genBtn = makeBtn(
+            '⚡ Запустить стресс-тест генерации',
+            () => runDeterministicGenerationBenchmark(genBtn, true),
+            '#c62828',
+            'Эталонный замер скорости',
+            'Отправляет в чат тестовый запрос, измеряет FPS и нагрузку на процессор во время ответа и отправляет JSON-отчёт.'
+        );
+        genBtn.style.textAlign = 'center';
+        const sendSnapBtn = makeBtn(
+            '🚀 Отправить текущий отчёт в чат',
+            async () => {
+                const md = FENCE + 'json\n' + JSON.stringify(buildInstantAiReportObject(), null, 2) + '\n' + FENCE;
+                await sendTextToAiChat("🤖 **[TELEMETRY REPORT v6.0.0]**\n\n" + md);
+            },
+            '#1565c0',
+            'Отправить технические метрики',
+            'Вставляет текущую статистику производительности вкладки в поле ввода и отправляет её в чат.'
+        );
+        sendSnapBtn.style.textAlign = 'center';
+        devBtns.appendChild(genBtn);
+        devBtns.appendChild(sendSnapBtn);
+        devSpoiler.appendChild(devBtns);
+        diagModal.appendChild(devSpoiler);
+
+        headerMainBtn.onclick = () => {
+            diagModal.style.display = 'none';
+            const r = topPillContainer.getBoundingClientRect();
+            panel.style.top = (r.bottom + 8) + 'px';
+            panel.style.left = Math.max(10, Math.min(window.innerWidth - 295, r.left)) + 'px';
+            panel.style.right = 'auto';
+            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+        };
+
+        headerDiagBtn.onclick = () => {
+            panel.style.display = 'none';
+            const r = topPillContainer.getBoundingClientRect();
+            diagModal.style.top = (r.bottom + 8) + 'px';
+            diagModal.style.left = Math.max(10, Math.min(window.innerWidth - 555, r.right - 540)) + 'px';
+            diagModal.style.right = 'auto';
+            diagModal.style.display = diagModal.style.display === 'none' ? 'flex' : 'none';
+            updateDiagnosticsLoop();
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!panel.contains(e.target) && !topPillContainer.contains(e.target)) panel.style.display = 'none';
+            if (!diagModal.contains(e.target) && !topPillContainer.contains(e.target)) diagModal.style.display = 'none';
+            if (e.target === exportModalOverlay) exportModalOverlay.style.display = 'none';
+        });
+
+        const observer = new MutationObserver((mutations) => {
+            const t0 = performance.now();
+            for (let i = 0; i < mutations.length; i++) {
+                const t = mutations[i].target;
+                if (t && (diagModal.contains(t) || panel.contains(t) || topPillContainer.contains(t) || streamStatusCard?.contains(t) || tooltipEl?.contains(t))) return;
+            }
+            diag._mutationCount += mutations.length;
+            let opt = false;
+            for (let i = 0; i < mutations.length; i++) {
+                const added = mutations[i].addedNodes;
+                for (let j = 0; j < added.length; j++) {
+                    const n = added[j];
+                    if (n.nodeType === 1 && (n.tagName === 'MS-CHAT-TURN' || n.querySelector?.('ms-chat-turn'))) { opt = true; break; }
+                }
+                if (opt) break;
+            }
+            if (opt) debouncedOptimizeDOM();
+            diag._scriptSelfTimeAccum += (performance.now() - t0);
+        });
+
+        function updateDiagnosticsLoop() {
+            const now = performance.now(), idleSec = Math.floor((now - diag.lastInteraction) / 1000);
+            diag.mutationsPerSec = diag._mutationCount; diag._mutationCount = 0;
+            diag.scrollWritesBlockedPerSec = diag._scrollWritesBlockedCount; diag._scrollWritesBlockedCount = 0;
+            diag.cpuBusyPercentEst = Math.min(100, Math.round((diag._longTaskWindowMs / 1000) * 100)); diag._longTaskWindowMs = 0;
+            diag.scriptSelfTimeMs = Math.round(diag._scriptSelfTimeAccum * 10) / 10; diag._scriptSelfTimeAccum = 0;
+
+            diagLbl.innerText = `🩺 ${diag.cpuBusyPercentEst}%`;
+            diagDot.style.background = diag.cpuBusyPercentEst > 30 ? '#ff1744' : (diag.cpuBusyPercentEst > 8 ? '#ffab00' : '#00e676');
+
+            if (diagModal.style.display === 'flex') {
+                statusBox.textContent =
+                    `Статус вкладки:      ${diag.isStreamingNow ? '⚡ Идёт приём ответа ИИ' : `🟢 Покой (${idleSec} сек без ввода)`}\n` +
+                    `Отклик интерфейса:   ${diag.eventLoopLagMs <= 15 ? '🟢 Мгновенный' : '🟡 Задержка'} (${diag.eventLoopLagMs} мс)\n` +
+                    `Занятость потока:    ~${diag.cpuBusyPercentEst}% (сам скрипт тратит всего ${diag.scriptSelfTimeMs} мс/сек)\n` +
+                    `Сэкономлено рендеров: ${diag.bufferedChunksSuppressed} шт. за сессию\n` +
+                    `Починено кодов:      ${diag.repairedBlocksCount} шт.`;
+            }
+        }
+
+        applyHypothesisStyles();
+        document.body.appendChild(topPillContainer);
+        document.body.appendChild(bottomCollapseBtn);
+        document.body.appendChild(panel);
+        document.body.appendChild(diagModal);
+        document.body.appendChild(exportModalOverlay);
+        ensureStreamStatusCard();
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        setInterval(updateDiagnosticsLoop, 1000);
+        nativeSetTimeout(() => { optimizeDOM(); collapseAll(); updateDiagnosticsLoop(); }, 1500);
     }
-
-    let restoreBtn;
-
-    const toggleBtn = makeBtn(enabled ? '⚡ Optimizer ON' : '⛔ Optimizer OFF', () => {
-        enabled = !enabled;
-        toggleBtn.innerText = enabled ? '⚡ Optimizer ON' : '⛔ Optimizer OFF';
-        toggleBtn.style.background = enabled ? '#3c3c3c' : '#8b0000';
-        saveConfig();
-        if (enabled) debouncedOptimizeDOM(); else restoreFullDOM();
-    }, enabled ? '#3c3c3c' : '#8b0000');
-
-    restoreBtn = makeBtn('⬆ Restore', restoreMessages, '#0056b3');
-    const cleanBtn = makeBtn('⬇ Reset to Max Visible', cleanAgain, '#d35400');
-    
-    const openExportModalBtn = makeBtn('⚙️ Export Options...', () => {
-        panel.style.display = 'none';
-        exportModalOverlay.style.display = 'flex';
-    }, '#2e7d32'); 
-
-    panel.appendChild(createRow('Max visible', maxInput));
-    panel.appendChild(createRow('Restore count', restoreInput));
-    panel.appendChild(createRow('Cache size', cacheInput));
-
-    const divider = document.createElement('hr');
-    divider.style.borderColor = '#444'; divider.style.margin = '4px 0';
-    panel.appendChild(divider);
-
-    panel.appendChild(toggleBtn); 
-    panel.appendChild(restoreBtn); 
-    panel.appendChild(cleanBtn);
-    panel.appendChild(openExportModalBtn);
-
-    optimizerBtn.onclick = () => {
-        if(exportModalOverlay.style.display === 'flex') { exportModalOverlay.style.display = 'none'; return; }
-        panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-    };
-
-    // ==============================
-    // 🪟 EXPORT MODAL (POWER USER)
-    // ==============================
-    const exportModalOverlay = document.createElement('div');
-    Object.assign(exportModalOverlay.style, {
-        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-        background: 'rgba(0,0,0,0.6)', zIndex: 100000, display: 'none',
-        alignItems: 'center', justifyContent: 'center'
-    });
-
-    const exportModal = document.createElement('div');
-    Object.assign(exportModal.style, {
-        background: '#2b2b2b', padding: '24px', borderRadius: '12px', color: '#fff', fontSize: '14px',
-        display: 'flex', flexDirection: 'column', gap: '14px', minWidth: '400px', boxShadow: '0 12px 40px rgba(0,0,0,0.8)'
-    });
-
-    const modalTitle = document.createElement('h3');
-    modalTitle.innerText = "Export Options";
-    modalTitle.style.margin = "0 0 10px 0";
-    modalTitle.style.textAlign = "center";
-    exportModal.appendChild(modalTitle);
-
-    const formatSelect = document.createElement('select');
-    Object.assign(formatSelect.style, inputStyle, { width: '140px', cursor: 'pointer' });
-    ['Markdown (.md)', 'JSON (.json)'].forEach((text, i) => {
-        const opt = document.createElement('option');
-        opt.value = i === 0 ? 'md' : 'json';
-        opt.innerText = text;
-        if(opt.value === expFormat) opt.selected = true;
-        formatSelect.appendChild(opt);
-    });
-    formatSelect.onchange = () => { expFormat = formatSelect.value; saveConfig(); };
-
-    function createCheckboxRow(text, isChecked, onChange) {
-        const row = document.createElement('label');
-        row.style.display = 'flex'; row.style.justifyContent = 'space-between'; row.style.alignItems = 'center'; row.style.cursor = 'pointer';
-        const span = document.createElement('span'); span.innerText = text;
-        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = isChecked;
-        cb.style.accentColor = '#2e7d32'; cb.style.cursor = 'pointer';
-        cb.onchange = (e) => onChange(e.target.checked);
-        row.appendChild(span); row.appendChild(cb);
-        return row;
-    }
-
-    const rowThoughts = createCheckboxRow("Include Gemini's Thoughts", expIncludeThoughts, (val) => { expIncludeThoughts = val; saveConfig(); });
-    const rowSystem = createCheckboxRow("Include System Prompt", expIncludeSystem, (val) => { expIncludeSystem = val; saveConfig(); });
-    const rowEmojis = createCheckboxRow("Remove Emojis (Strict Mode)", expRemoveEmojis, (val) => { expRemoveEmojis = val; saveConfig(); });
-
-    exportModal.appendChild(createRow('File Format', formatSelect));
-    exportModal.appendChild(rowThoughts);
-    exportModal.appendChild(rowSystem);
-    exportModal.appendChild(rowEmojis);
-
-    const modalBtnContainer = document.createElement('div');
-    modalBtnContainer.style.display = 'flex'; modalBtnContainer.style.gap = '10px'; modalBtnContainer.style.marginTop = '10px';
-
-    function closeExportModal() { exportModalOverlay.style.display = 'none'; }
-
-    const cancelBtn = makeBtn('Cancel', closeExportModal, '#555');
-    const startExportBtn = makeBtn('🚀 Start Auto-Scan', performAutoScrollExport, '#2e7d32');
-    startExportBtn.id = 'modal-start-export-btn';
-
-    modalBtnContainer.appendChild(cancelBtn);
-    modalBtnContainer.appendChild(startExportBtn);
-    exportModal.appendChild(modalBtnContainer);
-    exportModalOverlay.appendChild(exportModal);
-
-    document.addEventListener('click', (e) => { 
-        if (!panel.contains(e.target) && !btnContainer.contains(e.target) && e.target !== exportModalOverlay) panel.style.display = 'none'; 
-        if (e.target === exportModalOverlay) closeExportModal();
-    });
 
     function waitForBody() {
-        if (!document.body) { requestAnimationFrame(waitForBody); return; }
-        document.body.appendChild(btnContainer);
-        document.body.appendChild(panel);
-        document.body.appendChild(exportModalOverlay);
+        if (!document.body || !document.head) { nativeRAF(waitForBody); return; }
+        initUi();
     }
     waitForBody();
 })();

@@ -1,233 +1,48 @@
-# Google AI Studio Optimizer
+# ⚡ Google AI Studio — Ultimate Optimizer UI (Stream Buffer & GPU Saver Fork v6.0)
 
-[![Installer le Script](https://img.shields.io/badge/Tampermonkey-Installer_le_Script-green.svg)](https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js)
-
-Improves performance in long Google AI Studio conversations by reducing DOM overload, rendering lag, and adding advanced export capabilities.
-
-## Features
-
-* Hide old messages to instantly reduce DOM lag
-* Infinite memory-based message restoration (Zero-lag)
-* Flawless ON/OFF Toggle with full conversation restoration
-* Persistent configuration (automatically saves your settings)
-* One-click code block collapsing
-* Configurable cache & memory system
-* **NEW:** Automatic conversation export (Markdown or JSON)
-* **NEW:** Full auto-scroll conversation scanner
-* **NEW:** System Prompt export support
-* **NEW:** Gemini Thoughts export support
-* **NEW:** Emoji removal mode for clean datasets
-* Modern, centered floating UI
-
-## Description
-
-Google AI Studio Optimizer is a lightweight userscript that significantly improves performance in long Google AI Studio conversations by reducing DOM overload, optimizing message rendering, and providing advanced conversation export tools.
-
-It limits the number of visible messages, detaches older messages into a lightweight JavaScript memory pool, automatically collapses code blocks, and allows complete conversation exports in Markdown or JSON format.
-
-Everything runs locally in your browser. No network requests, no tracking, and no modification of AI responses.
-
-## Key features
-
-* **Reduces lag in long conversations:** Limits rendered chat messages to a configurable amount.
-* **Smart Memory Management:** Older messages are safely removed from the DOM to save CPU/RAM, but kept in memory for instant restoration.
-* **Persistent Settings:** Your preferences are automatically saved and restored.
-* **Flawless Deactivation:** Disabling the optimizer instantly restores the entire conversation exactly as Google AI Studio originally displayed it.
-* **Code Collapse:** Automatically collapses code blocks and allows one-click collapsing.
-* **Conversation Export:** Export entire conversations as Markdown or JSON files.
-* **System Prompt Detection:** Captures and exports system instructions when available.
-* **Gemini Thoughts Export:** Optionally includes Gemini reasoning blocks in exports.
-* **Emoji Removal Mode:** Produces clean datasets suitable for fine-tuning or external processing.
-* **Automatic Full Scan:** Scans lazy-loaded conversations to export complete histories.
-* **Real-time Counters:** Always know how many messages are currently stored in memory.
-
-## Goal
-
-Make long Google AI Studio sessions faster, smoother, exportable, and completely lag-free without changing how the AI works.
-
-## Installation
-
-### 1. Install Tampermonkey
-
-[https://www.tampermonkey.net/](https://www.tampermonkey.net/)
-
-### 2. Install the script
-
-Click the big green Install button 
-
-or click [![Installer le Script](https://img.shields.io/badge/Tampermonkey-Installer_le_Script-green.svg)](https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js)
-
-or Download:
-[https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js](https://raw.githubusercontent.com/Kfayyy/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js)
-
-### 3. Open Google AI Studio
-
-[https://aistudio.google.com/](https://aistudio.google.com/)
+> ** Attribution & Credits:**
+> This project is an enhanced performance & UX fork of **[Google AI Studio - Ultimate Optimizer UI](https://github.com/Kfayyy/Google-AI-Studio-Optimizer)** originally created by **[Kfayyy](https://github.com/Kfayyy)** ([GreasyFork](https://greasyfork.org/scripts/578144)). Huge thanks to Kfayyy for the original DOM Virtualization & Markdown/JSON Export architecture!
 
 ---
 
-## Feedback / Issues
+## 🚀 Direct Installation / Быстрая установка
 
-If you encounter any problem, please open an issue:
-[https://github.com/Kfayyy/Google-AI-Studio-Optimizer/issues](https://github.com/Kfayyy/Google-AI-Studio-Optimizer/issues)
-
-Or post a comment on GreasyFork:
-[https://greasyfork.org/fr/scripts/578144-google-ai-studio-ultimate-optimizer-ui/feedback](https://greasyfork.org/fr/scripts/578144-google-ai-studio-ultimate-optimizer-ui/feedback)
+1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
+2. **[Click Here to Install / Нажмите здесь для установки скрипта (Raw GitHub Link)](https://raw.githubusercontent.com/lagovi/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js)**
 
 ---
 
-## Why this script exists
+## 📊 Real Telemetry Benchmarks (Tested on Intel i5-3317U / Integrated HD 4000 / Linux Wayland)
 
-Large conversations in Google AI Studio can become slow because:
-
-* Too many DOM nodes (browser rendering overload)
-* Huge code blocks
-* Continuous rendering during token streaming
-* Lazy-loaded conversation history
-* Missing native export options
-
-This userscript eliminates lag by:
-
-* Hiding old messages visually
-* Completely detaching excessive DOM nodes while keeping them in RAM
-* Collapsing code automatically
-* Restoring messages instantly
-* Exporting entire conversations locally
-
-Then, it grows up with export funtion and more to come !
+| Metric / Показатель | Original / До оптимизации | v6.0 Fork / После оптимизации | Improvement / Прирост |
+| :--- | :--- | :--- | :--- |
+| **Idle Tab GPU / CPU Load (В покое)** | **76.6% CPU** (`79% GPU`) | **0% Idle Frames** | **Complete Silence in Idle** |
+| **Voice Dictation in Silence (Микрофон)** | **60 FPS `<canvas 32x32>` redraws** | **0 redraws (Blocked)** | **No GPU waste on mic** |
+| **Long Chat Scrolling (Скролл 120k px)** | **13.6 – 24.8 FPS** | **49.5 – 50.5 FPS** (`0` freezes) | **2x – 3.5x Smoother** |
+| **Multiline Prompt Typing (Ввод текста)** | **2.5 – 4.3 FPS** (748ms freezes) | **28.7 FPS** | **6.7x Faster Typing** |
+| **AI Streaming: Average FPS (Стрим ответа)** | **12.7 FPS** (drops to **3 FPS**) | **58.4 FPS** (steady **61 FPS**) | **Near-60 FPS Streaming** |
+| **AI Streaming: Main Thread Blocked Time** | **12,042 ms** (**53.6%** of time) | **656 ms** (**1.0%** of time) | **18.3x Less CPU Blocking!** |
+| **DOM Mutations per Streamed Reply** | **458 mutations** ($O(N^2)$) | **10 mutations** ($O(1)$ One-Shot) | **45x Fewer DOM Rebuilds** |
 
 ---
 
-## Usage
+## ✨ What's New in v6.0 Fork / Что нового в этом форке
 
-After installing the script and opening Google AI Studio, the optimizer starts automatically in the background. No additional setup is required.
-
-The script adds two modern floating buttons at the bottom center of the page:
-
-### Optimizer Panel
-
-Click the **🚀** button to open the Optimizer panel. All changes are saved automatically.
-
-Available options:
-
-### **Max visible**
-
-Controls how many messages remain actively visible in the conversation.
-
-Example:
-
-* `35` → only the latest 35 messages remain visible.
-* Older messages are automatically hidden.
-
-Lower values:
-
-* Reduce memory usage.
-* Drastically improve performance.
-* Make scrolling and typing smoother.
-
-Higher values:
-
-* Keep more conversation history visible.
-* Use more browser resources.
+1. **📦 Two-Phase Virtual Stream Buffer (`XHR.responseText` Lock):**
+   * Google AI Studio re-parses the entire accumulated Markdown string and syntax-highlights all code blocks on every incoming network chunk ($O(N^2)$ complexity).
+   * Our buffer lets the **Thinking (Thoughts)** block render immediately, then accumulates the heavy answer chunks in background memory at **0% CPU load** and renders the final reply in a single frame (with an optional *"👁️ Show received text now"* button).
+2. **🛡️ Idle GPU & CPU Saver:**
+   * Freezes infinite decorative CSS animations after 1 iteration (`animation-iteration-count: 1`).
+   * Disables expensive real-time `backdrop-filter: blur()` layers during scrolling.
+   * Blocks 60 FPS 2D-canvas equalizer draws inside `<ms-stt-button>` during voice dictation.
+3. **🧠 Fixed Userscript Self-Overhead:**
+   * Replaced the 100ms full-chat background `htmlToMarkdown()` observer loop with lazy capture (parses Markdown only when old turns are detached to RAM or when exporting).
+4. **✋ Draggable Human UX & Rich Tooltips:**
+   * Both the top header pill (`⚡ Chat | 🩺 0%`) and the bottom `▼ Collapse Code` button can be **dragged anywhere on screen** with automatic position saving in `localStorage`.
+   * Added an in-chat top banner (`⬆️ Restore older messages`) and detailed hover tooltips explaining every option in plain language.
+   * Added **Smart Scroll Parking** (parks viewport at the *beginning* of the new AI reply instead of jumping to the bottom) and **Auto-Repair for broken large code blocks (>1000 lines)**.
 
 ---
 
-### **Restore count**
-
-Controls how many hidden messages are brought back each time you click **Restore**.
-
-Example:
-
-* `10` → clicking **Restore** brings back the latest 10 hidden messages.
-
-Useful when you want to temporarily browse older sections of the conversation.
-
----
-
-### **Cache size**
-
-Controls how many hidden messages remain inside the DOM.
-
-Example:
-
-* `50` → the latest 50 hidden messages stay hidden via CSS.
-* Older messages are fully detached from the DOM and stored in memory.
-
-This provides maximum performance while preserving the complete conversation.
-
----
-
-### ** Optimizer ON / OFF**
-
-Enables or disables the optimizer instantly.
-
-**ON:** The script actively manages the conversation DOM.
-
-**OFF:** Every message is restored in its exact chronological order without refreshing the page.
-
----
-
-### **⬆ Restore (X messages)**
-
-Restores hidden messages according to the value defined in **Restore count**.
-
-The button displays a live counter showing how many messages are currently stored in memory.
-
-Example:
-
-`⬆ Restore (42 dispo)`
-
----
-
-### **⬇ Reset to Max**
-
-Reapplies the optimization using the current **Max visible** value.
-
-Example:
-
-If `Max visible = 35`, the script immediately hides older messages and restores a smooth workspace.
-
----
-
-### Code Collapse Button
-
-The **▼** button collapses all currently visible code blocks.
-
-Large code blocks can significantly impact browser rendering performance during long coding sessions.
-
----
-
-## Export System
-
-The optimizer includes a full conversation export engine.
-
-### Supported formats
-
-* Markdown (.md)
-* JSON (.json)
-
-### Export options
-
-* Include Gemini Thoughts
-* Include System Instructions
-* Remove emojis (strict mode)
-* Automatic lazy-loading scanner
-* Full conversation reconstruction
-
-### Auto-Scan Export
-
-The export scanner automatically:
-
-1. Restores hidden messages.
-2. Scrolls through the entire conversation.
-3. Captures every turn.
-4. Detects Gemini Thoughts.
-5. Detects System Instructions.
-6. Generates the export file.
-
-Everything happens locally in your browser.
-
----
-
-**Version:** 5.17
-**License:** MIT
+## 📜 License
+MIT License — Original work Copyright (c) Kfayyy; Fork enhancements Copyright (c) lagovi.
