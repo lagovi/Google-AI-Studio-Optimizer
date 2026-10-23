@@ -2,7 +2,7 @@
 // @name         Google AI Studio - Ultimate Optimizer UI (Stream Buffer & GPU Saver Fork)
 // @name:ru      Google AI Studio - Оптимизатор интерфейса и Буфер стрима (Форк без тормозов)
 // @namespace    https://github.com/lagovi/Google-AI-Studio-Optimizer
-// @version      6.3.0
+// @version      6.3.1
 // @description  Zero-CPU Stream Buffering + Background Tab Rendering Keep-Alive + Idle GPU Saver + Draggable UI + RU/EN i18n + MD/JSON Export.
 // @description:ru Фоновый рендеринг без пауз + Буферизация стрима ИИ + Защита видеокарты в покое + Перетаскиваемые кнопки + Экспорт в MD/JSON.
 // @match        https://aistudio.google.com/*
@@ -86,7 +86,7 @@
             t0Title: '🔄 Не останавливать генерацию и рендеринг в фоновой вкладке',
             t0Sub: 'Позволяет AI Studio продолжать приём и отрисовку ответа, когда вы переключились на другую вкладку или другой рабочий стол (обходит блокировку Page Visibility и rAF).',
             t1Title: '📦 Умная буферизация кода: Текст сразу, а тяжёлый код — одним кадром',
-            t1Sub: 'Сразу выводит на экран размышления и обычный текст ДО блока кода (чтобы вы могли читать), а тяжёлые куски кода копит в буфере при 0% CPU и выдаёт готовыми.'
+            t1Sub: 'Сразу выводит на экран размышления и обычный текст ДО блока кода (чтобы вы могли читать), а тяжёлые куски кода копит в буфере при 0% CPU и выдаёт готовыми.',
             t2Title: '🛡️ Отключить холостые анимации и размытие фона (Экономия видеокарты и батареи)',
             t2Sub: 'Убирает бесконечные фоновые перерисовки спиннеров, эквалайзера микрофона и полупрозрачное размытие панелей при прокрутке.',
             t3Title: '🛠️ Автоматически чинить сорванную разметку длинных блоков кода',
@@ -170,7 +170,7 @@
             t0Title: '🔄 Keep streaming & rendering active in background tabs',
             t0Sub: 'Prevents AI Studio from pausing generation or rendering when you switch to another tab or workspace (bypasses Page Visibility & background rAF suspension).',
             t1Title: '📦 Prose-First / Code-Gate Stream Buffer (Read text while code buffers)',
-            t1Sub: 'Renders Thinking and introductory text BEFORE code blocks immediately so you can read, while buffering heavy code blocks at 0% CPU until complete.'
+            t1Sub: 'Renders Thinking and introductory text BEFORE code blocks immediately so you can read, while buffering heavy code blocks at 0% CPU until complete.',
             t2Title: '🛡️ Idle GPU & Battery Saver (Freeze infinite animations & blur)',
             t2Sub: 'Stops infinite spinner animations, disables heavy backdrop-filter blur during scroll, and blocks 60fps mic canvas redraws.',
             t3Title: '🛠️ Auto-Repair broken markdown on huge code blocks',
@@ -1640,7 +1640,7 @@
     }
 
     function waitForBody() {
-        if (!document.body || !document.head) { nativeRAF(waitForBody); return; }
+        if (!document.body || !document.head) { nativeSetTimeout(waitForBody, 25); return; }
         initUi();
     }
     waitForBody();
