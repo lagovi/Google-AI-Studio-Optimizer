@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         Google AI Studio - Ultimate Optimizer UI (Stream Buffer & GPU Saver Fork)
+// @name:ru      Google AI Studio - Оптимизатор интерфейса и Буфер стрима (Форк без тормозов)
 // @namespace    https://github.com/lagovi/Google-AI-Studio-Optimizer
-// @version      6.0.0
-// @description  Zero-CPU Stream Buffering + Idle GPU Saver + Draggable UI + Rich Tooltips + DOM Optimizer + MD/JSON Export. Fork of Kfayyy's Ultimate Optimizer UI.
+// @version      6.1.0
+// @description  Zero-CPU Stream Buffering + Idle GPU Saver + Draggable UI + RU/EN i18n + MD/JSON Export. Fork of Kfayyy's Ultimate Optimizer UI.
+// @description:ru Буферизация стрима ИИ (0% нагрузки CPU) + Защита видеокарты в покое + Перетаскиваемые кнопки + Экспорт чата в MD/JSON.
 // @match        https://aistudio.google.com/*
 // @author       lagovi (Original author: Kfayyy - https://github.com/Kfayyy/Google-AI-Studio-Optimizer)
 // @license      MIT
@@ -13,34 +15,189 @@
 // @updateURL    https://raw.githubusercontent.com/lagovi/Google-AI-Studio-Optimizer/main/google-ai-studio-optimizer.user.js
 // ==/UserScript==
 
-/*
- * Credits & Attribution:
- * Based on "Google AI Studio - Ultimate Optimizer UI" (v5.17) by Kfayyy
- * Original Repository: https://github.com/Kfayyy/Google-AI-Studio-Optimizer
- * Original GreasyFork: https://greasyfork.org/scripts/578144
- *
- * Major enhancements in v6.0.0 Fork:
- * 1. Two-Phase Virtual Stream Buffer (XHR responseText lock): eliminates O(N^2) DOM/Markdown re-parsing during streaming (reduces main-thread CPU blocking from 53.6% to 1.0%).
- * 2. Idle GPU & CPU Saver: freezes infinite decorative CSS animations, disables heavy backdrop-filter blur, and blocks 60fps 2D-canvas draws on the microphone button.
- * 3. MutationObserver & Lazy Markdown Fix: eliminates background 100ms full-chat Markdown parsing during typing/streaming.
- * 4. Draggable UI with persistent coordinates, Rich Hover Tooltips, Smart Scroll Parking, and Auto-Repair for unrendered large code blocks.
- */
-
 (function() {
     'use strict';
 
     const FENCE = '\x60\x60\x60';
-    const CONFIG_KEY = 'ai_studio_optimizer_config_v600';
+    const CONFIG_KEY = 'ai_studio_optimizer_config_v610';
 
     let BASE_MAX_VISIBLE = 15, MAX_VISIBLE = 15, MAX_CACHE = 50, RESTORE_COUNT = 10, enabled = true;
     let hypKillInfiniteAnim = true, hypKillBackdropBlur = true, hypSmartObserver = true, hypLazyMarkdown = true;
     let hypSafeTurnIsolate = true, hypPromptContainment = true, hypKillMicCanvas = true;
     let hypThrottleAutoscroll = true, hypCoalesceStreamRaf = true, hypAutoRepairMarkdown = true;
-    let hypVirtualStreamBuffer = true;
-    let smartScrollParkOnFinish = true;
-
+    let hypVirtualStreamBuffer = true, smartScrollParkOnFinish = true;
     let expIncludeThoughts = false, expIncludeSystem = true, expRemoveEmojis = false, expFormat = 'md';
     let posTopPill = null, posBottomBtn = null;
+    let lang = (navigator.language || '').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+
+    const I18N = {
+        ru: {
+            dragTitle: 'Перетаскиваемая панель',
+            dragBody: 'Зажмите левую кнопку мыши и перетащите панель в любое удобное место экрана. Позиция сохранится автоматически.',
+            hdrChat: '⚡ Чат',
+            hdrChatActive: (vis, hid) => `⚡ ${vis} на экране | +${hid} в архиве`,
+            hdrChatSimple: (vis) => `⚡ Чат (${vis})`,
+            hdrChatTtTitle: 'Управление памятью чата и Экспорт',
+            hdrChatTtBody: 'Показывает, сколько последних сообщений открыто на экране, а сколько старых скрыто в архиве для ускорения браузера. Нажмите для настройки или экспорта чата.',
+            hdrDiagTtTitle: 'Монитор нагрузки и Ускоритель стрима',
+            hdrDiagTtBody: 'Показывает текущую занятость потока браузера (0% — вкладка работает идеально легко). Нажмите для настройки буферизации ответов и диагностики.',
+            collapseBtn: '⋮⋮ ▼ Свернуть код',
+            collapseDone: (c) => `⋮⋮ ▼ Свёрнуто: ${c}`,
+            collapseTtTitle: 'Свернуть длинные блоки кода (можно перетащить мышкой!)',
+            collapseTtBody: 'Нажмите, чтобы одним кликом свернуть все открытые простыни кода в чате. Зажмите кнопку мыши, чтобы перетащить кнопку в любое место.',
+            bannerHidden: (hid) => `⬆️ В архиве скрыто старых сообщений: ${hid}`,
+            bannerMore: (cnt) => `+ Показать ещё ${cnt}`,
+            bannerAll: 'Показать все',
+            lblMaxVis: 'Оставлять сообщений на экране:',
+            ttMaxVisTitle: 'Лимит видимых сообщений в чате',
+            ttMaxVisBody: 'Когда беседа становится длинной, старые сообщения сверху временно прячутся в архив, чтобы страница не тормозила при вводе текста и скролле. Рекомендуется: 15–25.',
+            lblRestoreCnt: 'Подгружать за один клик по:',
+            ttRestoreCntTitle: 'Шаг возврата из архива',
+            ttRestoreCntBody: 'Сколько старых сообщений возвращать на экран при нажатии кнопки «Показать ещё».',
+            btnOptOn: '⚡ Авто-скрытие старых сообщений: ВКЛ',
+            btnOptOff: '⛔ Авто-скрытие старых сообщений: ВЫКЛ',
+            ttOptTitle: 'Главный выключатель очистки ленты чата',
+            ttOptBody: 'Если выключить, все сообщения диалога (даже сотни штук) всегда будут оставаться в DOM страницы.',
+            btnRestore: (cnt, hid) => `⬆ Показать ещё +${cnt} старых (скрыто: ${hid})`,
+            ttRestoreTitle: 'Достать сообщения из архива',
+            ttRestoreBody: 'Возвращает предыдущие сообщения в верхнюю часть чата.',
+            btnResetVis: '⬇ Снова скрыть старые (оставить последние)',
+            ttResetVisTitle: 'Очистить экран до заданного лимита',
+            ttResetVisBody: 'Скрывает ранее развёрнутые старые сообщения обратно в архив, если страница начала подтормаживать.',
+            btnParkOn: '🎯 Ставить экран на начало ответа: ВКЛ',
+            btnParkOff: '🎯 Ставить экран на начало ответа: ВЫКЛ',
+            ttParkTitle: 'Умная парковка экрана после ответа ИИ',
+            ttParkBody: 'Ставит экран ровно на ПЕРВУЮ строчку нового ответа ИИ после завершения генерации, чтобы вы сразу читали его сверху вниз, а не улетали в подвал.',
+            btnLang: '🌐 Язык интерфейса: Русский (RU)',
+            btnExportOpen: '📥 Экспорт всей беседы в файл (.MD / .JSON)...',
+            ttExportTitle: 'Сохранить весь диалог на компьютер',
+            ttExportBody: 'Открывает окно скачивания всей истории переписки (включая скрытые сообщения, системный промпт и мысли модели) в формате Markdown или JSON.',
+            expModalTitle: '📥 Экспорт истории диалога',
+            expFormatLbl: 'Формат файла:',
+            expThoughtsLbl: 'Включить блоки размышлений (Thinking)',
+            expSysLbl: 'Включить системную инструкцию (System Prompt)',
+            expEmojiLbl: 'Удалить эмодзи из текста',
+            expCancel: 'Отмена',
+            expStart: '🚀 Сканировать и скачать',
+            expPrep: '⏳ Подготовка истории...',
+            expScan: (dots) => '⏳ Сканирование чата' + '.'.repeat(dots),
+            expErr: 'Ошибка при экспорте чата.',
+            diagModalTitle: '🩺 Ускоритель работы и Монитор ресурсов',
+            t1Title: '📦 Буферизация потокового ответа ИИ (Защита от тормозов при генерации)',
+            t1Sub: 'Когда ИИ пишет длинный ответ, скрипт сначала показывает блок мыслей (Thinking), а сам текст ответа копит в фоновом буфере и выдаёт готовым за 1 раз, снижая нагрузку на процессор в 15 раз.',
+            t2Title: '🛡️ Отключить холостые анимации и размытие фона (Экономия видеокарты и батареи)',
+            t2Sub: 'Убирает бесконечные фоновые перерисовки спиннеров, эквалайзера микрофона и полупрозрачное размытие панелей при прокрутке.',
+            t3Title: '🛠️ Автоматически чинить сорванную разметку длинных блоков кода',
+            t3Sub: 'Если Google AI Studio на огромном куске кода (>1000 строк) сбился и вывел его простым текстом, скрипт сам оформит его в аккуратное окно с кнопкой копирования.',
+            ttStatusTitle: 'Живая телеметрия вкладки',
+            ttStatusBody: '• Отклик интерфейса: 0–15 мс означает идеально плавную работу.\n• Занятость потока: какую долю секунды процессор тратит на тяжёлые задачи страницы.\n• Сэкономлено рендеров: сколько раз буфер спас страницу от лишнего пересчёта во время ответа ИИ.',
+            devSum: '🔬 Инструменты разработчика (Авто-тест скорости и отправка телеметрии ИИ)',
+            btnBench: '⚡ Запустить стресс-тест генерации',
+            ttBenchTitle: 'Эталонный замер скорости',
+            ttBenchBody: 'Отправляет в чат тестовый запрос (список + таблица + 50 функций кода), измеряет FPS и нагрузку на процессор во время ответа и отправляет JSON-отчёт.',
+            btnSnap: '🚀 Отправить текущий отчёт в чат',
+            ttSnapTitle: 'Отправить технические метрики',
+            ttSnapBody: 'Вставляет текущую статистику производительности вкладки в поле ввода и отправляет её в чат.',
+            hudStream: (kb, sec) => `⚡ Принимаем ответ ИИ без нагрузки на процессор: ${kb} КБ (${sec} сек)`,
+            hudFlushBtn: '👁️ Показать уже принятый текст',
+            hudFlushed: '⚡ Отрисовано!',
+            hudFlushTtTitle: 'Принудительно отрисовать текущую часть ответа',
+            hudFlushTtBody: 'Пока идёт генерация, скрипт копит текст ответа в лёгком буфере, чтобы браузер не тормозил на каждом слове. Нажмите сюда, если хотите прочитать начало ответа прямо сейчас.',
+            codeLines: (n) => `${n} строк`,
+            copyCode: '📋 Копировать код',
+            copiedCode: '✅ Скопировано!',
+            statusText: (isStr, idleSec, lag, busy, selfMs, bufCnt, repCnt) =>
+                `Статус вкладки:      ${isStr ? '⚡ Идёт приём ответа ИИ' : `🟢 Покой (${idleSec} сек без ввода)`}\n` +
+                `Отклик интерфейса:   ${lag <= 15 ? '🟢 Мгновенный' : '🟡 Задержка'} (${lag} мс)\n` +
+                `Занятость потока:    ~${busy}% (сам скрипт тратит всего ${selfMs} мс/сек)\n` +
+                `Сэкономлено рендеров: ${bufCnt} шт. за сессию\n` +
+                `Починено кодов:      ${repCnt} шт.`
+        },
+        en: {
+            dragTitle: 'Draggable Panel',
+            dragBody: 'Hold left mouse button and drag this bar anywhere on screen. Position is saved automatically.',
+            hdrChat: '⚡ Chat',
+            hdrChatActive: (vis, hid) => `⚡ ${vis} visible | +${hid} archived`,
+            hdrChatSimple: (vis) => `⚡ Chat (${vis})`,
+            hdrChatTtTitle: 'Chat DOM Memory & Export',
+            hdrChatTtBody: 'Shows how many recent messages are rendered on screen and how many older turns are archived to prevent browser lag. Click to configure or export chat.',
+            hdrDiagTtTitle: 'Resource Monitor & Stream Accelerator',
+            hdrDiagTtBody: 'Shows real-time main thread CPU load (0% means completely idle). Click to configure stream buffering and GPU optimizations.',
+            collapseBtn: '⋮⋮ ▼ Collapse Code',
+            collapseDone: (c) => `⋮⋮ ▼ Collapsed: ${c}`,
+            collapseTtTitle: 'Collapse all code blocks (Draggable!)',
+            collapseTtBody: 'Click to collapse all expanded code blocks in the chat. Hold mouse button to drag this button anywhere.',
+            bannerHidden: (hid) => `⬆️ Older messages archived for speed: ${hid}`,
+            bannerMore: (cnt) => `+ Show ${cnt} more`,
+            bannerAll: 'Show all',
+            lblMaxVis: 'Max visible messages on screen:',
+            ttMaxVisTitle: 'Visible turns limit',
+            ttMaxVisBody: 'Older messages above this limit are temporarily hidden from DOM so typing and scrolling stay fast in long sessions. Recommended: 15–25.',
+            lblRestoreCnt: 'Messages to restore per click:',
+            ttRestoreCntTitle: 'Restore step size',
+            ttRestoreCntBody: 'How many older messages to bring back when clicking Restore.',
+            btnOptOn: '⚡ Auto-Archive Old Messages: ON',
+            btnOptOff: '⛔ Auto-Archive Old Messages: OFF',
+            ttOptTitle: 'Master DOM Optimizer Switch',
+            ttOptBody: 'When enabled, keeps only the latest messages rendered in DOM.',
+            btnRestore: (cnt, hid) => `⬆ Restore +${cnt} older (${hid} hidden)`,
+            ttRestoreTitle: 'Restore from archive',
+            ttRestoreBody: 'Brings back older messages at the top of the conversation.',
+            btnResetVis: '⬇ Trim back to Max Visible limit',
+            ttResetVisTitle: 'Trim visible history',
+            ttResetVisBody: 'Hides previously restored old messages back into the archive.',
+            btnParkOn: '🎯 Park scroll at reply start: ON',
+            btnParkOff: '🎯 Park scroll at reply start: OFF',
+            ttParkTitle: 'Smart Scroll Parking after AI reply',
+            ttParkBody: 'Positions the viewport right at the FIRST line of the new AI response when generation finishes, instead of jumping to the very bottom.',
+            btnLang: '🌐 Interface Language: English (EN)',
+            btnExportOpen: '📥 Export full conversation (.MD / .JSON)...',
+            ttExportTitle: 'Save full chat history to disk',
+            ttExportBody: 'Opens the export dialog to scan and download the entire conversation (including archived turns, System Prompt, and Thoughts) as Markdown or JSON.',
+            expModalTitle: '📥 Export Conversation History',
+            expFormatLbl: 'File Format:',
+            expThoughtsLbl: "Include Model's Thoughts (Thinking)",
+            expSysLbl: 'Include System Instructions',
+            expEmojiLbl: 'Remove Emojis (Strict Mode)',
+            expCancel: 'Cancel',
+            expStart: '🚀 Auto-Scan & Download',
+            expPrep: '⏳ Preparing history...',
+            expScan: (dots) => '⏳ Scanning chat' + '.'.repeat(dots),
+            expErr: 'Error exporting conversation.',
+            diagModalTitle: '🩺 Stream Accelerator & Resource Monitor',
+            t1Title: '📦 Two-Phase Virtual Stream Buffer (Zero-Lag AI Generation)',
+            t1Sub: 'Renders the Thinking block first, then accumulates heavy answer chunks in a background buffer and renders once when complete — cutting CPU blocking by 15x.',
+            t2Title: '🛡️ Idle GPU & Battery Saver (Freeze infinite animations & blur)',
+            t2Sub: 'Stops infinite spinner animations, disables heavy backdrop-filter blur during scroll, and blocks 60fps mic canvas redraws.',
+            t3Title: '🛠️ Auto-Repair broken markdown on huge code blocks',
+            t3Sub: 'If AI Studio fails to format a massive code block (>1000 lines), automatically wraps it into a clean code container with a Copy button.',
+            ttStatusTitle: 'Live Tab Telemetry',
+            ttStatusBody: '• UI Response Lag: 0–15 ms means buttery-smooth UI.\n• Main Thread Busy: percentage of time spent in heavy tasks.\n• Saved Re-renders: intermediate DOM rebuilds prevented by the stream buffer.',
+            devSum: '🔬 Developer Tools (Automated Stream Benchmark & Telemetry)',
+            btnBench: '⚡ Run Deterministic Stream Benchmark',
+            ttBenchTitle: 'Standardized speed benchmark',
+            ttBenchBody: 'Sends a deterministic test prompt, measures FPS and CPU blocking during streaming, and outputs a JSON report.',
+            btnSnap: '🚀 Send telemetry snapshot to chat',
+            ttSnapTitle: 'Send technical metrics',
+            ttSnapBody: 'Inserts the current performance telemetry JSON into the prompt box and sends it.',
+            hudStream: (kb, sec) => `⚡ Buffering AI response at 0% CPU load: ${kb} KB (${sec}s)`,
+            hudFlushBtn: '👁️ Render received text now',
+            hudFlushed: '⚡ Rendered!',
+            hudFlushTtTitle: 'Flush buffered text immediately',
+            hudFlushTtBody: 'While generating, text is accumulated in a lightweight buffer to prevent lag. Click here to render the partial response right now.',
+            codeLines: (n) => `${n} lines`,
+            copyCode: '📋 Copy Code',
+            copiedCode: '✅ Copied!',
+            statusText: (isStr, idleSec, lag, busy, selfMs, bufCnt, repCnt) =>
+                `Tab Status:          ${isStr ? '⚡ Receiving AI stream' : `🟢 Idle (${idleSec}s no input)`}\n` +
+                `UI Responsiveness:   ${lag <= 15 ? '🟢 Instant' : '🟡 Delayed'} (${lag} ms lag)\n` +
+                `Main Thread Load:    ~${busy}% (userscript overhead: ${selfMs} ms/s)\n` +
+                `Saved DOM Rebuilds:  ${bufCnt} chunks buffered\n` +
+                `Repaired CodeBlocks: ${repCnt}`
+        }
+    };
+
+    const tr = () => I18N[lang] || I18N.en;
 
     function loadConfig() {
         try {
@@ -56,8 +213,8 @@
             smartScrollParkOnFinish = p.smartScrollParkOnFinish ?? true;
             expIncludeThoughts = p.expIncludeThoughts ?? false; expIncludeSystem = p.expIncludeSystem ?? true;
             expRemoveEmojis = p.expRemoveEmojis ?? false; expFormat = p.expFormat ?? 'md';
-            posTopPill = p.posTopPill || null;
-            posBottomBtn = p.posBottomBtn || null;
+            posTopPill = p.posTopPill || null; posBottomBtn = p.posBottomBtn || null;
+            if (p.lang === 'ru' || p.lang === 'en') lang = p.lang;
         } catch (e) {}
         MAX_VISIBLE = BASE_MAX_VISIBLE;
     }
@@ -71,7 +228,7 @@
                 hypThrottleAutoscroll, hypCoalesceStreamRaf, hypAutoRepairMarkdown,
                 hypVirtualStreamBuffer, smartScrollParkOnFinish,
                 expIncludeThoughts, expIncludeSystem, expRemoveEmojis, expFormat,
-                posTopPill, posBottomBtn
+                posTopPill, posBottomBtn, lang
             }));
         } catch (e) {}
     }
@@ -110,35 +267,24 @@
         if (initialSavedPos && typeof initialSavedPos.left === 'number' && typeof initialSavedPos.top === 'number') {
             el.style.left = Math.min(window.innerWidth - 60, Math.max(5, initialSavedPos.left)) + 'px';
             el.style.top = Math.min(window.innerHeight - 40, Math.max(5, initialSavedPos.top)) + 'px';
-            el.style.right = 'auto';
-            el.style.bottom = 'auto';
-            el.style.transform = 'none';
+            el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
         }
-
         let startX = 0, startY = 0, origLeft = 0, origTop = 0, isDragging = false, moved = false;
-
         el.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return;
             const rect = el.getBoundingClientRect();
-            startX = e.clientX; startY = e.clientY;
-            origLeft = rect.left; origTop = rect.top;
+            startX = e.clientX; startY = e.clientY; origLeft = rect.left; origTop = rect.top;
             isDragging = true; moved = false;
-
             const onMove = (me) => {
                 if (!isDragging) return;
                 const dx = me.clientX - startX, dy = me.clientY - startY;
                 if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
                     moved = true;
-                    const newLeft = Math.min(window.innerWidth - rect.width - 4, Math.max(4, origLeft + dx));
-                    const newTop = Math.min(window.innerHeight - rect.height - 4, Math.max(4, origTop + dy));
-                    el.style.left = newLeft + 'px';
-                    el.style.top = newTop + 'px';
-                    el.style.right = 'auto';
-                    el.style.bottom = 'auto';
-                    el.style.transform = 'none';
+                    el.style.left = Math.min(window.innerWidth - rect.width - 4, Math.max(4, origLeft + dx)) + 'px';
+                    el.style.top = Math.min(window.innerHeight - rect.height - 4, Math.max(4, origTop + dy)) + 'px';
+                    el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
                 }
             };
-
             const onUp = () => {
                 if (!isDragging) return;
                 isDragging = false;
@@ -149,18 +295,16 @@
                     onSavePos({ left: Math.round(finalRect.left), top: Math.round(finalRect.top) });
                 }
             };
-
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         }, true);
-
         el.addEventListener('click', (e) => {
             if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
         }, true);
     }
 
     let tooltipEl = null;
-    function attachTooltip(targetEl, titleText, bodyText) {
+    function attachTooltip(targetEl, getTitleFn, getBodyFn) {
         targetEl.addEventListener('mouseenter', () => {
             if (!tooltipEl && document.body) {
                 tooltipEl = document.createElement('div');
@@ -173,13 +317,15 @@
                 document.body.appendChild(tooltipEl);
             }
             if (!tooltipEl) return;
+            const titleText = typeof getTitleFn === 'function' ? getTitleFn() : getTitleFn;
+            const bodyText = typeof getBodyFn === 'function' ? getBodyFn() : getBodyFn;
+            if (!titleText) return;
             tooltipEl.textContent = '';
             const t = document.createElement('div');
             t.style.fontWeight = 'bold'; t.style.color = '#64ffda'; t.style.marginBottom = '4px';
             t.textContent = titleText;
             const b = document.createElement('div');
-            b.style.color = '#cbd5e1';
-            b.textContent = bodyText;
+            b.style.color = '#cbd5e1'; b.textContent = bodyText;
             tooltipEl.appendChild(t); tooltipEl.appendChild(b);
             tooltipEl.style.display = 'block';
 
@@ -189,15 +335,12 @@
             let top = rect.bottom + 10;
             if (top + ttRect.height > window.innerHeight - 10) top = rect.top - ttRect.height - 10;
             left = Math.max(10, Math.min(window.innerWidth - ttRect.width - 10, left));
-            tooltipEl.style.left = left + 'px';
-            tooltipEl.style.top = top + 'px';
+            tooltipEl.style.left = left + 'px'; tooltipEl.style.top = top + 'px';
         });
-        targetEl.addEventListener('mouseleave', () => {
-            if (tooltipEl) tooltipEl.style.display = 'none';
-        });
+        targetEl.addEventListener('mouseleave', () => { if (tooltipEl) tooltipEl.style.display = 'none'; });
     }
 
-    let streamStatusCard = null, streamStatusTitle = null;
+    let streamStatusCard = null, streamStatusTitle = null, streamFlushBtn = null;
 
     function ensureStreamStatusCard() {
         if (streamStatusCard && document.body?.contains(streamStatusCard)) return streamStatusCard;
@@ -215,25 +358,21 @@
         streamStatusTitle.style.fontWeight = 'bold';
         streamStatusTitle.style.color = '#64ffda';
 
-        const flushBtn = document.createElement('button');
-        flushBtn.textContent = '👁️ Показать уже принятый текст';
-        Object.assign(flushBtn.style, {
+        streamFlushBtn = document.createElement('button');
+        streamFlushBtn.textContent = tr().hudFlushBtn;
+        Object.assign(streamFlushBtn.style, {
             background: '#00695c', color: '#fff', border: '1px solid #26a69a', borderRadius: '14px',
             padding: '4px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flexShrink: 0
         });
-        attachTooltip(
-            flushBtn,
-            'Принудительно отрисовать текущую часть ответа',
-            'Пока идёт генерация, скрипт копит текст ответа в лёгком буфере, чтобы браузер не тормозил на каждом слове. Нажмите сюда, если хотите прочитать начало ответа прямо сейчас.'
-        );
-        flushBtn.onclick = () => {
+        attachTooltip(streamFlushBtn, () => tr().hudFlushTtTitle, () => tr().hudFlushTtBody);
+        streamFlushBtn.onclick = () => {
             diag.forceFlushNow = true;
-            flushBtn.textContent = '⚡ Отрисовано!';
-            nativeSetTimeout(() => { flushBtn.textContent = '👁️ Показать уже принятый текст'; }, 1200);
+            streamFlushBtn.textContent = tr().hudFlushed;
+            nativeSetTimeout(() => { streamFlushBtn.textContent = tr().hudFlushBtn; }, 1200);
         };
 
         streamStatusCard.appendChild(streamStatusTitle);
-        streamStatusCard.appendChild(flushBtn);
+        streamStatusCard.appendChild(streamFlushBtn);
         document.body.appendChild(streamStatusCard);
         return streamStatusCard;
     }
@@ -241,14 +380,11 @@
     function updateStreamBufferHud(active, bytesCount) {
         const card = ensureStreamStatusCard();
         if (!card) return;
-        if (!active || !diag.isStreamingNow) {
-            card.style.display = 'none';
-            return;
-        }
+        if (!active || !diag.isStreamingNow) { card.style.display = 'none'; return; }
         card.style.display = 'flex';
         const kb = (bytesCount / 1024).toFixed(1);
         const elapsedSec = Math.max(1, Math.round((performance.now() - (diag.streamStartTs || performance.now())) / 1000));
-        streamStatusTitle.textContent = `⚡ Принимаем ответ ИИ без нагрузки на процессор: ${kb} КБ (${elapsedSec} сек)`;
+        streamStatusTitle.textContent = tr().hudStream(kb, elapsedSec);
     }
 
     try {
@@ -270,14 +406,11 @@
 
         function getSmartBufferedText(xhrInstance, realText) {
             if (!hypVirtualStreamBuffer || !xhrInstance._isAiGenStream || !diag.isStreamingNow || xhrInstance.readyState !== 3) {
-                if (xhrInstance._isAiGenStream && xhrInstance.readyState === 4) {
-                    updateStreamBufferHud(false, 0);
-                }
+                if (xhrInstance._isAiGenStream && xhrInstance.readyState === 4) updateStreamBufferHud(false, 0);
                 return realText;
             }
             if (!diag.streamStartTs) diag.streamStartTs = performance.now();
-            const now = performance.now();
-            const len = realText ? realText.length : 0;
+            const now = performance.now(), len = realText ? realText.length : 0;
 
             const isEarlyThinkingWindow = !xhrInstance._thoughtPhaseFlushed && (now - diag.streamStartTs < 7000) && (now - xhrInstance._lastAllowedFlushTs > 1800);
             const hasThoughtDomAlready = Boolean(document.querySelector('ms-chat-turn:last-of-type ms-thought-chunk'));
@@ -302,14 +435,14 @@
             return xhrInstance._cachedFlushedText || '';
         }
 
-        if (respTextDesc && respTextDesc.get) {
+        if (respTextDesc?.get) {
             Object.defineProperty(XHRProto, 'responseText', {
                 get: function() { return getSmartBufferedText(this, respTextDesc.get.call(this)); },
                 configurable: true
             });
         }
 
-        if (respDesc && respDesc.get) {
+        if (respDesc?.get) {
             Object.defineProperty(XHRProto, 'response', {
                 get: function() {
                     const realResp = respDesc.get.call(this);
@@ -322,10 +455,7 @@
 
         function shouldAllowStreamEventNow(xhr) {
             if (!hypVirtualStreamBuffer || !xhr._isAiGenStream || !diag.isStreamingNow) return true;
-            if (xhr.readyState === 4) {
-                updateStreamBufferHud(false, 0);
-                return true;
-            }
+            if (xhr.readyState === 4) { updateStreamBufferHud(false, 0); return true; }
             if (diag.forceFlushNow) return true;
             const now = performance.now();
             if (!diag.streamStartTs) diag.streamStartTs = now;
@@ -341,7 +471,7 @@
             return false;
         }
 
-        if (onReadyDesc && onReadyDesc.set) {
+        if (onReadyDesc?.set) {
             Object.defineProperty(XHRProto, 'onreadystatechange', {
                 get: function() { return onReadyDesc.get.call(this); },
                 set: function(fn) {
@@ -357,7 +487,7 @@
             });
         }
 
-        if (onProgDesc && onProgDesc.set) {
+        if (onProgDesc?.set) {
             Object.defineProperty(XHRProto, 'onprogress', {
                 get: function() { return onProgDesc.get.call(this); },
                 set: function(fn) {
@@ -524,9 +654,9 @@
                     padding: '6px 12px', background: '#22222a', borderBottom: '1px solid #333', fontSize: '12px', color: '#80cbc4'
                 });
                 const lbl = document.createElement('span');
-                lbl.textContent = `<> ${match[1] || 'Code'} (${match[2].split('\n').length} строк)`;
+                lbl.textContent = `<> ${match[1] || 'Code'} (${tr().codeLines(match[2].split('\n').length)})`;
                 const cpBtn = document.createElement('button');
-                cpBtn.textContent = '📋 Копировать код';
+                cpBtn.textContent = tr().copyCode;
                 Object.assign(cpBtn.style, {
                     background: '#00695c', color: '#fff', border: 'none', borderRadius: '4px',
                     padding: '4px 10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px'
@@ -534,8 +664,8 @@
                 const codeContent = match[2];
                 cpBtn.onclick = () => {
                     safeClipboardWrite(codeContent);
-                    cpBtn.textContent = '✅ Скопировано!';
-                    nativeSetTimeout(() => { cpBtn.textContent = '📋 Копировать код'; }, 2000);
+                    cpBtn.textContent = tr().copiedCode;
+                    nativeSetTimeout(() => { cpBtn.textContent = tr().copyCode; }, 2000);
                 };
                 bar.appendChild(lbl); bar.appendChild(cpBtn);
                 const pre = document.createElement('pre');
@@ -586,7 +716,7 @@
     }
 
     let hiddenMessages = [], detachedMessages = [], chatContainerRef = null, lastUrl = location.href;
-    let inChatRestoreBanner = null;
+    let inChatRestoreBanner = null, bannerMoreBtn = null, bannerAllBtn = null;
     const exportedTurns = new Map();
     const debounce = (fn, w) => { let t; return (...a) => { clearTimeout(t); t = nativeSetTimeout(() => fn(...a), w); }; };
     const getMessages = () => Array.from(document.querySelectorAll('ms-chat-turn'));
@@ -602,35 +732,35 @@
             });
             const lbl = document.createElement('span');
             lbl.id = 'ai-opt-banner-lbl';
-            const btnMore = document.createElement('button');
-            btnMore.textContent = `+ Показать ещё ${RESTORE_COUNT}`;
-            Object.assign(btnMore.style, {
+            bannerMoreBtn = document.createElement('button');
+            Object.assign(bannerMoreBtn.style, {
                 background: '#1565c0', color: '#fff', border: 'none', borderRadius: '12px',
                 padding: '4px 10px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold'
             });
-            btnMore.onclick = (e) => { e.stopPropagation(); restoreMessages(); };
+            bannerMoreBtn.onclick = (e) => { e.stopPropagation(); restoreMessages(); };
 
-            const btnAll = document.createElement('button');
-            btnAll.textContent = 'Показать все';
-            Object.assign(btnAll.style, {
+            bannerAllBtn = document.createElement('button');
+            Object.assign(bannerAllBtn.style, {
                 background: '#37474f', color: '#fff', border: 'none', borderRadius: '12px',
                 padding: '4px 10px', cursor: 'pointer', fontSize: '11px'
             });
-            btnAll.onclick = (e) => { e.stopPropagation(); restoreFullDOM(); };
+            bannerAllBtn.onclick = (e) => { e.stopPropagation(); restoreFullDOM(); };
 
             inChatRestoreBanner.appendChild(lbl);
-            inChatRestoreBanner.appendChild(btnMore);
-            inChatRestoreBanner.appendChild(btnAll);
+            inChatRestoreBanner.appendChild(bannerMoreBtn);
+            inChatRestoreBanner.appendChild(bannerAllBtn);
         }
+        bannerMoreBtn.textContent = tr().bannerMore(RESTORE_COUNT);
+        bannerAllBtn.textContent = tr().bannerAll;
         return inChatRestoreBanner;
     }
 
     function updateUiCounters() {
         const hiddenTotal = hiddenMessages.length + detachedMessages.length;
         const visCount = getMessages().filter(t => t.style.display !== 'none').length;
-        if (restoreBtn) restoreBtn.innerText = `⬆ Показать ещё +${RESTORE_COUNT} старых (скрыто: ${hiddenTotal})`;
+        if (restoreBtn) restoreBtn.innerText = tr().btnRestore(RESTORE_COUNT, hiddenTotal);
         if (headerMainBtn) {
-            headerMainBtn.innerText = hiddenTotal > 0 ? `⚡ ${visCount} на экране | +${hiddenTotal} в архиве` : `⚡ Чат (${visCount})`;
+            headerMainBtn.innerText = hiddenTotal > 0 ? tr().hdrChatActive(visCount, hiddenTotal) : tr().hdrChatSimple(visCount);
         }
         const banner = ensureInChatRestoreBanner();
         if (hiddenTotal > 0) {
@@ -639,7 +769,7 @@
                 if (banner.nextSibling !== firstVis) firstVis.parentNode.insertBefore(banner, firstVis);
                 banner.style.display = 'flex';
                 const lbl = banner.querySelector('#ai-opt-banner-lbl');
-                if (lbl) lbl.textContent = `⬆️ В архиве скрыто старых сообщений: ${hiddenTotal}`;
+                if (lbl) lbl.textContent = tr().bannerHidden(hiddenTotal);
             }
         } else {
             banner.style.display = 'none';
@@ -841,7 +971,7 @@
             const scrollEl = findScrollableChatContainer();
             const wasEnabled = enabled, origScroll = scrollEl.scrollTop;
             enabled = false; restoreFullDOM();
-            btn.innerText = '⏳ Подготовка истории...';
+            btn.innerText = tr().expPrep;
             let lastUp = -1;
             while (scrollEl.scrollTop > 0 && scrollEl.scrollTop !== lastUp) {
                 lastUp = scrollEl.scrollTop; scrollEl.scrollTop -= 2500;
@@ -857,7 +987,7 @@
                 collapseAll();
                 maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
                 dots = (dots + 1) % 4;
-                btn.innerText = '⏳ Сканирование чата' + '.'.repeat(dots);
+                btn.innerText = tr().expScan(dots);
                 document.querySelectorAll('ms-chat-turn').forEach(turn => {
                     if (!turn.id) return;
                     if (!orderedIds.includes(turn.id)) orderedIds.push(turn.id);
@@ -876,7 +1006,7 @@
             if (wasEnabled) { enabled = true; MAX_VISIBLE = BASE_MAX_VISIBLE; optimizeDOM(); }
             exportModalOverlay.style.display = 'none';
         } catch (e) {
-            alert('Ошибка при экспорте чата.');
+            alert(tr().expErr);
         } finally {
             btn.innerText = origTxt; btn.disabled = false;
         }
@@ -898,7 +1028,7 @@
     function buildInstantAiReportObject() {
         const vis = getMessages();
         return {
-            report_version: '6.0.0-fork-release',
+            report_version: '6.1.0-i18n-fork',
             timestamp: new Date().toISOString(),
             session_scale: {
                 turns_total_known: vis.length + detachedMessages.length,
@@ -955,7 +1085,7 @@
                     if (now - bStart >= 1000) {
                         const sec = Math.round((now - startT) / 1000);
                         buckets.push({ sec, fps: bFrames.length, max_frame_ms: Math.round(Math.max(...bFrames)) });
-                        if (btnEl) btnEl.innerText = `⏳ Тест идёт (${sec}с | ${bFrames.length} FPS)...`;
+                        if (btnEl) btnEl.innerText = `⏳ (${sec}s | ${bFrames.length} FPS)...`;
                         bFrames = []; bStart = now;
                     }
                     if ((started && (now - firstTok > 2000) && !gen) || (now - startT > 65000)) { done = true; resolve(); return; }
@@ -967,7 +1097,7 @@
             const totalMs = Math.round(performance.now() - startT);
             const clean = deltas.slice(1), avg = clean.reduce((a, b) => a + b, 0) / (clean.length || 1);
             diag.benchmarkHistory.push({
-                run_id: diag.benchmarkHistory.length + 1, run_type: 'DETERMINISTIC_STREAM_V600',
+                run_id: diag.benchmarkHistory.length + 1, run_type: 'DETERMINISTIC_STREAM_V610',
                 total_wall_time_ms: totalMs,
                 avg_fps_during_stream: Math.round((clean.length / (totalMs / 1000)) * 10) / 10,
                 avg_frame_ms: Math.round(avg * 10) / 10,
@@ -981,10 +1111,10 @@
             await safeClipboardWrite(md);
             if (autoSendAfter) {
                 await new Promise(r => nativeSetTimeout(r, 1200));
-                await sendTextToAiChat("🤖 **[AUTO-TELEMETRY REPORT v6.0.0]**\n\n" + md);
+                await sendTextToAiChat("🤖 **[AUTO-TELEMETRY REPORT v6.1.0]**\n\n" + md);
             }
             if (btnEl) {
-                btnEl.innerText = '✅ Замер отправлен!';
+                btnEl.innerText = '✅ OK!';
                 nativeSetTimeout(() => { btnEl.innerText = origText; btnEl.disabled = false; }, 3000);
             }
         } catch (e) { if (btnEl) { btnEl.innerText = origText; btnEl.disabled = false; } }
@@ -999,6 +1129,12 @@
     }
 
     let topPillContainer, headerMainBtn, headerDiagBtn, diagDot, bottomCollapseBtn, panel, diagModal, exportModalOverlay, restoreBtn;
+    const i18nUpdaters = [];
+
+    function refreshAllUiLanguage() {
+        i18nUpdaters.forEach(fn => { try { fn(); } catch (e) {} });
+        updateUiCounters();
+    }
 
     function initUi() {
         topPillContainer = document.createElement('div');
@@ -1011,7 +1147,7 @@
         const dragGrip = document.createElement('span');
         dragGrip.innerText = '⋮⋮';
         Object.assign(dragGrip.style, { color: '#777', fontSize: '12px', padding: '0 2px', cursor: 'grab' });
-        attachTooltip(dragGrip, 'Перетаскиваемая панель', 'Зажмите левую кнопку мыши и перетащите панель в любое удобное место. Позиция сохранится автоматически.');
+        attachTooltip(dragGrip, () => tr().dragTitle, () => tr().dragBody);
 
         const pillBtnStyle = {
             padding: '5px 11px', background: '#2b2d31', color: '#e8eaed', border: 'none',
@@ -1020,13 +1156,9 @@
         };
 
         headerMainBtn = document.createElement('button');
-        headerMainBtn.innerText = '⚡ Чат';
+        headerMainBtn.innerText = tr().hdrChat;
         Object.assign(headerMainBtn.style, pillBtnStyle);
-        attachTooltip(
-            headerMainBtn,
-            'Управление памятью чата и Экспорт',
-            'Показывает, сколько последних сообщений сейчас открыто на экране, а сколько старых сообщений временно скрыто в архиве. Нажмите для настройки или экспорта чата в файл.'
-        );
+        attachTooltip(headerMainBtn, () => tr().hdrChatTtTitle, () => tr().hdrChatTtBody);
 
         headerDiagBtn = document.createElement('button');
         diagDot = document.createElement('span');
@@ -1036,11 +1168,7 @@
         headerDiagBtn.appendChild(diagDot);
         headerDiagBtn.appendChild(diagLbl);
         Object.assign(headerDiagBtn.style, pillBtnStyle);
-        attachTooltip(
-            headerDiagBtn,
-            'Монитор нагрузки и Ускоритель стрима',
-            'Показывает текущую загрузку потока браузера в процентах (0% — вкладка работает идеально легко). Нажмите, чтобы открыть настройки буферизации ответов и диагностику.'
-        );
+        attachTooltip(headerDiagBtn, () => tr().hdrDiagTtTitle, () => tr().hdrDiagTtBody);
 
         topPillContainer.appendChild(dragGrip);
         topPillContainer.appendChild(headerMainBtn);
@@ -1049,7 +1177,7 @@
         makeElementDraggable(topPillContainer, posTopPill, (newPos) => { posTopPill = newPos; saveConfig(); });
 
         bottomCollapseBtn = document.createElement('button');
-        bottomCollapseBtn.innerText = '⋮⋮ ▼ Свернуть код';
+        bottomCollapseBtn.innerText = tr().collapseBtn;
         Object.assign(bottomCollapseBtn.style, {
             position: 'fixed', bottom: '22px', right: '42px',
             padding: '8px 14px', background: '#25262b', color: '#e8eaed',
@@ -1057,16 +1185,13 @@
             boxShadow: '0 4px 14px rgba(0,0,0,0.5)', fontSize: '12px', fontWeight: 'bold',
             zIndex: 99997, userSelect: 'none'
         });
-        attachTooltip(
-            bottomCollapseBtn,
-            'Свернуть длинные блоки кода (перетаскивается мышкой!)',
-            'Нажмите, чтобы одним кликом свернуть все открытые простыни кода в чате. Зажмите кнопку мыши, чтобы перетащить кнопку в любое место.'
-        );
+        attachTooltip(bottomCollapseBtn, () => tr().collapseTtTitle, () => tr().collapseTtBody);
         bottomCollapseBtn.onclick = () => {
             const c = collapseAll();
-            bottomCollapseBtn.innerText = `⋮⋮ ▼ Свёрнуто: ${c}`;
-            nativeSetTimeout(() => { bottomCollapseBtn.innerText = '⋮⋮ ▼ Свернуть код'; }, 1200);
+            bottomCollapseBtn.innerText = tr().collapseDone(c);
+            nativeSetTimeout(() => { bottomCollapseBtn.innerText = tr().collapseBtn; }, 1200);
         };
+        i18nUpdaters.push(() => { bottomCollapseBtn.innerText = tr().collapseBtn; });
 
         makeElementDraggable(bottomCollapseBtn, posBottomBtn, (newPos) => { posBottomBtn = newPos; saveConfig(); });
 
@@ -1074,29 +1199,34 @@
         Object.assign(panel.style, {
             position: 'fixed', top: '48px', right: '190px', zIndex: 99999,
             background: '#25262b', padding: '16px', borderRadius: '12px', color: '#fff', fontSize: '12.5px',
-            display: 'none', flexDirection: 'column', gap: '9px', minWidth: '280px',
+            display: 'none', flexDirection: 'column', gap: '9px', minWidth: '285px',
             boxShadow: '0 8px 28px rgba(0,0,0,0.75)', border: '1px solid #3c4043', fontFamily: 'sans-serif'
         });
 
-        function makeBtn(txt, act, color = '#3c3c3c', tooltipTitle = '', tooltipBody = '') {
-            const b = document.createElement('button'); b.innerText = txt;
+        function makeBtn(getTxtFn, act, color = '#3c3c3c', getTtTitle = null, getTtBody = null) {
+            const b = document.createElement('button');
+            const updateTxt = () => { b.innerText = typeof getTxtFn === 'function' ? getTxtFn() : getTxtFn; };
+            updateTxt();
+            i18nUpdaters.push(updateTxt);
             Object.assign(b.style, {
                 background: color, color: '#fff', border: 'none', padding: '8px 10px', borderRadius: '7px',
                 cursor: 'pointer', width: '100%', fontWeight: 'bold', fontSize: '12px', flexShrink: 0, textAlign: 'left'
             });
             b.onclick = act;
-            if (tooltipTitle) attachTooltip(b, tooltipTitle, tooltipBody);
+            if (getTtTitle) attachTooltip(b, getTtTitle, getTtBody);
             return b;
         }
 
         const inputStyle = { width: '58px', padding: '4px', borderRadius: '4px', border: '1px solid #555', background: '#161618', color: '#fff', textAlign: 'center' };
 
-        function createSettingRow(labelTxt, inputEl, ttTitle, ttBody) {
+        function createSettingRow(getLabelFn, inputEl, getTtTitle, getTtBody) {
             const r = document.createElement('div');
             Object.assign(r.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' });
-            const s = document.createElement('span'); s.innerText = labelTxt;
+            const s = document.createElement('span');
+            const up = () => { s.innerText = typeof getLabelFn === 'function' ? getLabelFn() : getLabelFn; };
+            up(); i18nUpdaters.push(up);
             r.appendChild(s); r.appendChild(inputEl);
-            if (ttTitle) attachTooltip(r, ttTitle, ttBody);
+            if (getTtTitle) attachTooltip(r, getTtTitle, getTtBody);
             return r;
         }
 
@@ -1106,67 +1236,61 @@
         const restoreInput = document.createElement('input'); restoreInput.type = 'number'; restoreInput.value = RESTORE_COUNT; Object.assign(restoreInput.style, inputStyle);
         restoreInput.onchange = () => { RESTORE_COUNT = parseInt(restoreInput.value) || 10; saveConfig(); updateUiCounters(); };
 
-        panel.appendChild(createSettingRow(
-            'Оставлять сообщений на экране:', maxInput,
-            'Лимит видимых сообщений в чате',
-            'Когда беседа становится длинной, старые сообщения сверху временно прячутся в архив, чтобы страница не тормозила при наборе текста и скролле. Рекомендуется: 15–25.'
-        ));
-        panel.appendChild(createSettingRow(
-            'Подгружать за один клик по:', restoreInput,
-            'Шаг возврата из архива',
-            'Сколько старых сообщений возвращать на экран при нажатии кнопки «Показать ещё».'
-        ));
+        panel.appendChild(createSettingRow(() => tr().lblMaxVis, maxInput, () => tr().ttMaxVisTitle, () => tr().ttMaxVisBody));
+        panel.appendChild(createSettingRow(() => tr().lblRestoreCnt, restoreInput, () => tr().ttRestoreCntTitle, () => tr().ttRestoreCntBody));
 
         const toggleOptBtn = makeBtn(
-            enabled ? '⚡ Авто-скрытие старых сообщений: ВКЛ' : '⛔ Авто-скрытие старых сообщений: ВЫКЛ',
+            () => enabled ? tr().btnOptOn : tr().btnOptOff,
             () => {
                 enabled = !enabled;
-                toggleOptBtn.innerText = enabled ? '⚡ Авто-скрытие старых сообщений: ВКЛ' : '⛔ Авто-скрытие старых сообщений: ВЫКЛ';
+                toggleOptBtn.innerText = enabled ? tr().btnOptOn : tr().btnOptOff;
                 toggleOptBtn.style.background = enabled ? '#2e7d32' : '#8b0000';
                 saveConfig();
                 if (enabled) optimizeDOM(); else restoreFullDOM();
             },
             enabled ? '#2e7d32' : '#8b0000',
-            'Главный выключатель очистки ленты чата',
-            'Если выключить, все сообщения диалога всегда будут оставаться на странице.'
+            () => tr().ttOptTitle, () => tr().ttOptBody
         );
         panel.appendChild(toggleOptBtn);
 
-        restoreBtn = makeBtn('⬆ Показать ещё старые сообщения', restoreMessages, '#0277bd', 'Достать сообщения из архива', 'Возвращает предыдущие сообщения в верхнюю часть чата.');
+        restoreBtn = makeBtn(() => tr().btnRestore(RESTORE_COUNT, hiddenMessages.length + detachedMessages.length), restoreMessages, '#0277bd', () => tr().ttRestoreTitle, () => tr().ttRestoreBody);
         panel.appendChild(restoreBtn);
 
-        panel.appendChild(makeBtn(
-            '⬇ Снова скрыть старые (оставить последние)',
-            () => { MAX_VISIBLE = BASE_MAX_VISIBLE; optimizeDOM(); },
-            '#e65100',
-            'Очистить экран до заданного лимита',
-            'Скрывает ранее развёрнутые старые сообщения обратно в архив.'
-        ));
+        panel.appendChild(makeBtn(() => tr().btnResetVis, () => { MAX_VISIBLE = BASE_MAX_VISIBLE; optimizeDOM(); }, '#e65100', () => tr().ttResetVisTitle, () => tr().ttResetVisBody));
 
         const parkBtn = makeBtn(
-            smartScrollParkOnFinish ? '🎯 Ставить экран на начало ответа: ВКЛ' : '🎯 Ставить экран на начало ответа: ВЫКЛ',
+            () => smartScrollParkOnFinish ? tr().btnParkOn : tr().btnParkOff,
             () => {
                 smartScrollParkOnFinish = !smartScrollParkOnFinish;
-                parkBtn.innerText = smartScrollParkOnFinish ? '🎯 Ставить экран на начало ответа: ВКЛ' : '🎯 Ставить экран на начало ответа: ВЫКЛ';
+                parkBtn.innerText = smartScrollParkOnFinish ? tr().btnParkOn : tr().btnParkOff;
                 parkBtn.style.background = smartScrollParkOnFinish ? '#00695c' : '#555';
                 saveConfig();
             },
             smartScrollParkOnFinish ? '#00695c' : '#555',
-            'Умная парковка экрана после ответа ИИ',
-            'Ставит экран ровно на ПЕРВУЮ строчку нового ответа ИИ после завершения генерации, чтобы вы сразу читали его сверху вниз.'
+            () => tr().ttParkTitle, () => tr().ttParkBody
         );
         panel.appendChild(parkBtn);
+
+        const langBtn = makeBtn(
+            () => tr().btnLang,
+            () => {
+                lang = lang === 'ru' ? 'en' : 'ru';
+                saveConfig();
+                refreshAllUiLanguage();
+            },
+            '#37474f'
+        );
+        panel.appendChild(langBtn);
 
         const divider = document.createElement('hr');
         divider.style.borderColor = '#444'; divider.style.margin = '4px 0';
         panel.appendChild(divider);
 
         const openExportModalBtn = makeBtn(
-            '📥 Экспорт всей беседы в файл (.MD / .JSON)...',
+            () => tr().btnExportOpen,
             () => { panel.style.display = 'none'; exportModalOverlay.style.display = 'flex'; },
             '#6a1b9a',
-            'Сохранить весь диалог на компьютер',
-            'Открывает окно скачивания всей истории переписки (включая скрытые сообщения, системный промпт и мысли модели) в формате Markdown или JSON.'
+            () => tr().ttExportTitle, () => tr().ttExportBody
         );
         panel.appendChild(openExportModalBtn);
 
@@ -1185,8 +1309,9 @@
         });
 
         const expTitle = document.createElement('h3');
-        expTitle.innerText = '📥 Экспорт истории диалога';
         expTitle.style.margin = '0 0 6px 0';
+        i18nUpdaters.push(() => { expTitle.innerText = tr().expModalTitle; });
+        expTitle.innerText = tr().expModalTitle;
         exportModal.appendChild(expTitle);
 
         const formatSelect = document.createElement('select');
@@ -1198,12 +1323,13 @@
             formatSelect.appendChild(opt);
         });
         formatSelect.onchange = () => { expFormat = formatSelect.value; saveConfig(); };
-        exportModal.appendChild(createSettingRow('Формат файла:', formatSelect, '', ''));
+        exportModal.appendChild(createSettingRow(() => tr().expFormatLbl, formatSelect, null, null));
 
-        function createExpCheckbox(labelTxt, initVal, onChange) {
+        function createExpCheckbox(getLabelFn, initVal, onChange) {
             const lbl = document.createElement('label');
             Object.assign(lbl.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '3px 0' });
-            const sp = document.createElement('span'); sp.innerText = labelTxt;
+            const sp = document.createElement('span');
+            const up = () => { sp.innerText = getLabelFn(); }; up(); i18nUpdaters.push(up);
             const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = initVal;
             cb.style.width = '16px'; cb.style.height = '16px'; cb.style.accentColor = '#00c853';
             cb.onchange = (e) => onChange(e.target.checked);
@@ -1211,15 +1337,15 @@
             return lbl;
         }
 
-        exportModal.appendChild(createExpCheckbox('Включить блоки размышлений (Thinking)', expIncludeThoughts, v => { expIncludeThoughts = v; saveConfig(); }));
-        exportModal.appendChild(createExpCheckbox('Включить системную инструкцию (System Prompt)', expIncludeSystem, v => { expIncludeSystem = v; saveConfig(); }));
-        exportModal.appendChild(createExpCheckbox('Удалить эмодзи из текста', expRemoveEmojis, v => { expRemoveEmojis = v; saveConfig(); }));
+        exportModal.appendChild(createExpCheckbox(() => tr().expThoughtsLbl, expIncludeThoughts, v => { expIncludeThoughts = v; saveConfig(); }));
+        exportModal.appendChild(createExpCheckbox(() => tr().expSysLbl, expIncludeSystem, v => { expIncludeSystem = v; saveConfig(); }));
+        exportModal.appendChild(createExpCheckbox(() => tr().expEmojiLbl, expRemoveEmojis, v => { expRemoveEmojis = v; saveConfig(); }));
 
         const expBtnsRow = document.createElement('div');
         Object.assign(expBtnsRow.style, { display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: '10px', marginTop: '8px' });
-        const expCancelBtn = makeBtn('Отмена', () => { exportModalOverlay.style.display = 'none'; }, '#555');
+        const expCancelBtn = makeBtn(() => tr().expCancel, () => { exportModalOverlay.style.display = 'none'; }, '#555');
         expCancelBtn.style.textAlign = 'center';
-        const expStartBtn = makeBtn('🚀 Сканировать и скачать', performAutoScrollExport, '#2e7d32');
+        const expStartBtn = makeBtn(() => tr().expStart, performAutoScrollExport, '#2e7d32');
         expStartBtn.id = 'modal-start-export-btn';
         expStartBtn.style.textAlign = 'center';
         expBtnsRow.appendChild(expCancelBtn);
@@ -1240,7 +1366,8 @@
         Object.assign(diagHdr.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '8px' });
         const diagTitle = document.createElement('strong');
         diagTitle.style.fontSize = '14px';
-        diagTitle.innerText = '🩺 Ускоритель работы и Монитор ресурсов';
+        diagTitle.innerText = tr().diagModalTitle;
+        i18nUpdaters.push(() => { diagTitle.innerText = tr().diagModalTitle; });
         const diagClose = document.createElement('button');
         diagClose.innerText = '✕';
         Object.assign(diagClose.style, { background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px' });
@@ -1251,12 +1378,13 @@
         const togglesBox = document.createElement('div');
         Object.assign(togglesBox.style, { display: 'flex', flexDirection: 'column', gap: '8px', background: '#262630', padding: '12px', borderRadius: '10px' });
 
-        function createHumanToggle(title, subtitle, initVal, onChange) {
+        function createHumanToggle(getTitleFn, getSubFn, initVal, onChange) {
             const row = document.createElement('label');
             Object.assign(row.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', cursor: 'pointer', paddingBottom: '6px', borderBottom: '1px solid #343442' });
             const left = document.createElement('div');
-            const t = document.createElement('div'); t.style.fontWeight = 'bold'; t.style.color = '#fff'; t.innerText = title;
-            const s = document.createElement('div'); s.style.fontSize = '11px'; s.style.color = '#aaa'; s.style.marginTop = '2px'; s.innerText = subtitle;
+            const t = document.createElement('div'); t.style.fontWeight = 'bold'; t.style.color = '#fff';
+            const s = document.createElement('div'); s.style.fontSize = '11px'; s.style.color = '#aaa'; s.style.marginTop = '2px';
+            const up = () => { t.innerText = getTitleFn(); s.innerText = getSubFn(); }; up(); i18nUpdaters.push(up);
             left.appendChild(t); left.appendChild(s);
             const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = initVal;
             Object.assign(cb.style, { width: '18px', height: '18px', accentColor: '#00e676', cursor: 'pointer', flexShrink: 0 });
@@ -1265,26 +1393,9 @@
             togglesBox.appendChild(row);
         }
 
-        createHumanToggle(
-            '📦 Буферизация потокового ответа ИИ (Защита от тормозов при генерации)',
-            'Когда ИИ пишет длинный ответ, скрипт сначала показывает блок мыслей (Thinking), а сам текст ответа копит в фоновом буфере и выдаёт готовым за 1 раз, снижая нагрузку на процессор в 15 раз.',
-            hypVirtualStreamBuffer,
-            v => { hypVirtualStreamBuffer = v; saveConfig(); applyHypothesisStyles(); }
-        );
-
-        createHumanToggle(
-            '🛡️ Отключить холостые анимации и размытие фона (Экономия видеокарты и батареи)',
-            'Убирает бесконечные фоновые перерисовки спиннеров, эквалайзера микрофона и полупрозрачное размытие панелей при прокрутке.',
-            hypKillInfiniteAnim && hypKillBackdropBlur && hypKillMicCanvas,
-            v => { hypKillInfiniteAnim = v; hypKillBackdropBlur = v; hypKillMicCanvas = v; saveConfig(); applyHypothesisStyles(); }
-        );
-
-        createHumanToggle(
-            '🛠️ Автоматически чинить сорванную разметку длинных блоков кода',
-            'Если Google AI Studio на огромном куске кода (>1000 строк) сбился и вывел его простым текстом, скрипт сам оформит его в аккуратное окно с кнопкой копирования.',
-            hypAutoRepairMarkdown,
-            v => { hypAutoRepairMarkdown = v; saveConfig(); if (v) repairUnparsedCodeBlocks(); }
-        );
+        createHumanToggle(() => tr().t1Title, () => tr().t1Sub, hypVirtualStreamBuffer, v => { hypVirtualStreamBuffer = v; saveConfig(); applyHypothesisStyles(); });
+        createHumanToggle(() => tr().t2Title, () => tr().t2Sub, hypKillInfiniteAnim && hypKillBackdropBlur && hypKillMicCanvas, v => { hypKillInfiniteAnim = v; hypKillBackdropBlur = v; hypKillMicCanvas = v; saveConfig(); applyHypothesisStyles(); });
+        createHumanToggle(() => tr().t3Title, () => tr().t3Sub, hypAutoRepairMarkdown, v => { hypAutoRepairMarkdown = v; saveConfig(); if (v) repairUnparsedCodeBlocks(); });
 
         diagModal.appendChild(togglesBox);
 
@@ -1293,39 +1404,29 @@
             background: '#141418', padding: '12px', borderRadius: '8px', border: '1px solid #2d2d38',
             whiteSpace: 'pre-wrap', lineHeight: '1.5', fontFamily: 'monospace', fontSize: '11.5px'
         });
-        attachTooltip(
-            statusBox,
-            'Живая телеметрия вкладки',
-            '• Задержка отклика (Lag): 0–15 мс означает идеально плавный интерфейс.\n• Занятость потока: какую долю секунды процессор тратит на тяжёлые задачи страницы.\n• Сэкономлено рендеров: сколько раз буфер спас страницу от лишнего пересчёта во время ответа ИИ.'
-        );
+        attachTooltip(statusBox, () => tr().ttStatusTitle, () => tr().ttStatusBody);
         diagModal.appendChild(statusBox);
 
         const devSpoiler = document.createElement('details');
         Object.assign(devSpoiler.style, { background: '#181820', padding: '8px 12px', borderRadius: '8px', border: '1px solid #2e3440' });
         const devSum = document.createElement('summary');
         devSum.style.cursor = 'pointer'; devSum.style.color = '#80cbc4'; devSum.style.fontSize = '11.5px';
-        devSum.innerText = '🔬 Инструменты разработчика (Авто-тест скорости и отправка телеметрии ИИ)';
+        devSum.innerText = tr().devSum;
+        i18nUpdaters.push(() => { devSum.innerText = tr().devSum; });
         devSpoiler.appendChild(devSum);
 
         const devBtns = document.createElement('div');
         Object.assign(devBtns.style, { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' });
-        const genBtn = makeBtn(
-            '⚡ Запустить стресс-тест генерации',
-            () => runDeterministicGenerationBenchmark(genBtn, true),
-            '#c62828',
-            'Эталонный замер скорости',
-            'Отправляет в чат тестовый запрос, измеряет FPS и нагрузку на процессор во время ответа и отправляет JSON-отчёт.'
-        );
+        const genBtn = makeBtn(() => tr().btnBench, () => runDeterministicGenerationBenchmark(genBtn, true), '#c62828', () => tr().ttBenchTitle, () => tr().ttBenchBody);
         genBtn.style.textAlign = 'center';
         const sendSnapBtn = makeBtn(
-            '🚀 Отправить текущий отчёт в чат',
+            () => tr().btnSnap,
             async () => {
                 const md = FENCE + 'json\n' + JSON.stringify(buildInstantAiReportObject(), null, 2) + '\n' + FENCE;
-                await sendTextToAiChat("🤖 **[TELEMETRY REPORT v6.0.0]**\n\n" + md);
+                await sendTextToAiChat("🤖 **[TELEMETRY REPORT v6.1.0]**\n\n" + md);
             },
             '#1565c0',
-            'Отправить технические метрики',
-            'Вставляет текущую статистику производительности вкладки в поле ввода и отправляет её в чат.'
+            () => tr().ttSnapTitle, () => tr().ttSnapBody
         );
         sendSnapBtn.style.textAlign = 'center';
         devBtns.appendChild(genBtn);
@@ -1389,12 +1490,11 @@
             diagDot.style.background = diag.cpuBusyPercentEst > 30 ? '#ff1744' : (diag.cpuBusyPercentEst > 8 ? '#ffab00' : '#00e676');
 
             if (diagModal.style.display === 'flex') {
-                statusBox.textContent =
-                    `Статус вкладки:      ${diag.isStreamingNow ? '⚡ Идёт приём ответа ИИ' : `🟢 Покой (${idleSec} сек без ввода)`}\n` +
-                    `Отклик интерфейса:   ${diag.eventLoopLagMs <= 15 ? '🟢 Мгновенный' : '🟡 Задержка'} (${diag.eventLoopLagMs} мс)\n` +
-                    `Занятость потока:    ~${diag.cpuBusyPercentEst}% (сам скрипт тратит всего ${diag.scriptSelfTimeMs} мс/сек)\n` +
-                    `Сэкономлено рендеров: ${diag.bufferedChunksSuppressed} шт. за сессию\n` +
-                    `Починено кодов:      ${diag.repairedBlocksCount} шт.`;
+                statusBox.textContent = tr().statusText(
+                    diag.isStreamingNow, idleSec, diag.eventLoopLagMs,
+                    diag.cpuBusyPercentEst, diag.scriptSelfTimeMs,
+                    diag.bufferedChunksSuppressed, diag.repairedBlocksCount
+                );
             }
         }
 
